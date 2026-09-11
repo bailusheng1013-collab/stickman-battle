@@ -1,294 +1,1171 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>2D Arena Shooter</title>
-    <style>
-        body {
-            margin: 0;
-            padding: 0;
-            background-color: #111;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            font-family: Arial, sans-serif;
-            color: white;
-            overflow: hidden;
-        }
-        canvas {
-            background-color: #222;
-            border: 2px solid #444;
-            cursor: crosshair;
-        }
-        #ui {
-            position: absolute;
-            top: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            font-size: 24px;
-            text-shadow: 2px 2px 4px #000;
-            pointer-events: none;
-        }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stickman Battle</title>
+<style>
+    body {
+        margin: 0;
+        overflow: hidden;
+        background: #1a1a1a;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100vh;
+        font-family: Arial, sans-serif;
+        color: white;
+    }
+    canvas {
+        background: #000;
+        box-shadow: 0 0 30px rgba(0,0,0,0.8);
+        border: 2px solid #333;
+    }
+    #startOverlay {
+        position: absolute;
+        top: 0; left: 0; width: 100%; height: 100%;
+        background: rgba(0,0,0,0.85);
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        z-index: 10;
+        cursor: pointer;
+    }
+    #startOverlay h1 { font-size: 48px; color: #f0c828; margin-bottom: 20px; }
+    #startOverlay p { font-size: 24px; color: #ccc; animation: pulse 1.5s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+</style>
 </head>
 <body>
 
-    <div id="ui">Score: <span id="score">0</span></div>
-    <canvas id="gameCanvas" width="800" height="600"></canvas>
+<div id="startOverlay">
+    <h1>STICKMAN BATTLE</h1>
+    <p>Click or Press Any Key to Start</p>
+</div>
 
-    <script>
-        const canvas = document.getElementById('gameCanvas');
-        const ctx = canvas.getContext('2d');
-        const scoreElement = document.getElementById('score');
+<canvas id="gameCanvas" width="1000" height="600"></canvas>
 
-        // --- GAME STATE ---
-        let score = 0;
-        let gameOver = false;
-        let spawnTimer = 0;
-        let shootCooldown = 0;
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const WIDTH = 1000, HEIGHT = 600;
+const GROUND_Y = HEIGHT - 100;
+const FPS = 60;
 
-        // --- INPUT HANDLING ---
-        const keys = {};
-        const mouse = { x: 0, y: 0, down: false };
+const rgb = (r, g, b) => `rgb(${r},${g},${b})`;
+const rgba = (r, g, b, a) => `rgba(${r},${g},${b},${a})`;
 
-        window.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
-        window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+const WHITE = rgb(245, 245, 245), BLACK = rgb(20, 20, 20), RED = rgb(220, 60, 60), DARK_RED = rgb(150, 30, 30);
+const BLUE = rgb(60, 100, 220), DARK_BLUE = rgb(30, 60, 150), GREEN = rgb(60, 200, 90), YELLOW = rgb(240, 200, 40);
+const GRAY = rgb(120, 120, 120), BROWN = rgb(120, 80, 40), SILVER = rgb(200, 205, 210), GOLD = rgb(230, 190, 60);
+const PURPLE = rgb(180, 80, 220), TOXIC_GREEN = rgb(120, 220, 80);
 
-        canvas.addEventListener('mousemove', e => {
-            const rect = canvas.getBoundingClientRect();
-            mouse.x = e.clientX - rect.left;
-            mouse.y = e.clientY - rect.top;
-        });
+const GRAVITY = 0.8, JUMP_STRENGTH = -15, MOVE_SPEED = 5, MAX_HEALTH = 100;
+const MAX_SUPER_CHARGE = 100, SUPER_CHARGE_PER_PUNCH = 15, SUPER_CHARGE_PER_KICK = 20;
+const SUPER_CHARGE_PER_PROJECTILE = 10, SUPER_DAMAGE = 60, SUPER_BLAST_SPEED = 18;
+const SUPER_BLAST_RADIUS = 130, SUPER_KNOCKBACK = 180, SUPER_POP = -28;
+const FIREBALL_DAMAGE = 18, FIREBALL_RADIUS = 12, FIREBALL_IMPACT_RADIUS = 55;
+const FIREBALL_SPAWN_MIN = 90, FIREBALL_SPAWN_MAX = 180, FIREBALL_FALL_SPEED = 6;
+const NUKE_DAMAGE = 90, NUKE_RADIUS = 18, NUKE_IMPACT_RADIUS = 250, NUKE_KNOCKBACK = 280, NUKE_POP = -35;
+const NUKE_RADIATION_DAMAGE = 5, NUKE_RADIATION_TICK = 30, NUKE_RADIATION_DURATION = 180, NUKE_RADIATION_RADIUS = 150;
+const CAMERA_SMOOTHING = 0.08, CAMERA_TARGET_OFFSET = 200;
+const LAVA_RISE_INTERVAL = 600, LAVA_RISE_AMOUNT = 25, MIN_PLATFORM_Y = 80;
+const TARGET_PLATFORM_COUNT = 9, MAX_PLATFORMS = 14;
+const HAZARD_DAMAGE = 40, HAZARD_STUN = 24, RELOAD_TIME = 60;
+const PUNCH_RANGE = 70, PUNCH_DAMAGE = 8, PUNCH_COOLDOWN = 25;
+const KICK_RANGE = 90, KICK_DAMAGE = 14, KICK_COOLDOWN = 45, HIT_STUN = 12;
+const MAX_WEAPONS_ON_FIELD = 2, MAX_ARMOR_ON_FIELD = 1;
+const WEAPON_SPAWN_INTERVAL = 300, ARMOR_SPAWN_INTERVAL = 480;
 
-        canvas.addEventListener('mousedown', () => {
-            if (gameOver) restartGame();
-            else mouse.down = true;
-        });
-        canvas.addEventListener('mouseup', () => mouse.down = false);
+const WEAPON_TYPES = {
+    "uzi": { reach: 0, damage: 5, cooldown: 5, durability: 50, color: rgb(45, 45, 50), ranged: true, proj_speed: 28, proj_kind: "bullet", mag_size: 50 },
+    "sword": { reach: 110, damage: 18, cooldown: 30, durability: 5, color: SILVER, ranged: false },
+    "bat": { reach: 85, damage: 22, cooldown: 40, durability: 8, color: BROWN, ranged: false },
+    "spear": { reach: 135, damage: 14, cooldown: 35, durability: 6, color: rgb(90, 60, 30), ranged: false },
+    "bow": { reach: 0, damage: 12, cooldown: 45, durability: 6, color: rgb(101, 67, 33), ranged: true, proj_speed: 15, proj_kind: "arrow", mag_size: 50 },
+    "gatling": { reach: 0, damage: 4, cooldown: 6, durability: 40, color: rgb(70, 70, 80), ranged: true, proj_speed: 24, proj_kind: "bullet", mag_size: 50 },
+    "bomb": { reach: 0, damage: 35, cooldown: 50, durability: 3, color: rgb(40, 40, 40), ranged: true, proj_speed: 9, proj_kind: "bomb" },
+    "nuke": { reach: 0, damage: 90, cooldown: 80, durability: 1, color: rgb(180, 40, 40), ranged: true, proj_speed: 7, proj_kind: "nuke" }
+};
 
-        // --- ENTITIES ---
-        const player = {
-            x: canvas.width / 2,
-            y: canvas.height / 2,
-            radius: 15,
-            speed: 4,
-            color: '#00ff00'
-        };
+const ARMOR_TYPES = {
+    "light": { absorb: 15, durability: 3, color: rgb(120, 220, 120), name: "Light" },
+    "medium": { absorb: 30, durability: 4, color: rgb(120, 170, 240), name: "Medium" },
+    "heavy": { absorb: 50, durability: 5, color: rgb(240, 200, 80), name: "Heavy" }
+};
 
-        let bullets = [];
-        let enemies = [];
-        let particles = [];
+const STAGES = [
+    { name: "Meadow", sky_top: rgb(135, 190, 230), sky_bottom: rgb(220, 235, 245), ground: rgb(110, 90, 70), ground_edge: rgb(80, 150, 80), decor: "meadow" },
+    { name: "Desert", sky_top: rgb(250, 200, 120), sky_bottom: rgb(255, 235, 190), ground: rgb(200, 165, 100), ground_edge: rgb(225, 195, 130), decor: "desert" },
+    { name: "Night City", sky_top: rgb(20, 20, 45), sky_bottom: rgb(60, 50, 90), ground: rgb(40, 40, 50), ground_edge: rgb(90, 90, 110), decor: "city" },
+    { name: "Volcano", sky_top: rgb(60, 20, 15), sky_bottom: rgb(150, 60, 30), ground: rgb(50, 35, 30), ground_edge: rgb(200, 80, 30), decor: "volcano" },
+    { name: "Snow Peak", sky_top: rgb(180, 210, 235), sky_bottom: rgb(235, 240, 245), ground: rgb(225, 235, 240), ground_edge: rgb(255, 255, 255), decor: "snow" }
+];
 
-        // --- HELPER FUNCTIONS ---
-        function getAngle(x1, y1, x2, y2) {
-            return Math.atan2(y2 - y1, x2 - x1);
-        }
+const WEAPON_CHOICES = [null, "uzi", "sword", "bat", "spear", "bow", "gatling", "bomb", "nuke"];
 
-        function distance(x1, y1, x2, y2) {
-            return Math.hypot(x2 - x1, y2 - y1);
-        }
+// Audio System
+const AudioContext = window.AudioContext || window.webkitAudioContext;
+const audioCtx = new AudioContext();
+let audioInitialized = false;
 
-        function spawnEnemy() {
-            let x, y;
-            // Spawn on a random edge of the screen
-            const side = Math.floor(Math.random() * 4);
-            if (side === 0) { x = Math.random() * canvas.width; y = -20; }
-            else if (side === 1) { x = canvas.width + 20; y = Math.random() * canvas.height; }
-            else if (side === 2) { x = Math.random() * canvas.width; y = canvas.height + 20; }
-            else { x = -20; y = Math.random() * canvas.height; }
+function initAudio() {
+    if (!audioInitialized) {
+        audioCtx.resume();
+        audioInitialized = true;
+        document.getElementById('startOverlay').style.display = 'none';
+    }
+}
+window.addEventListener('click', initAudio);
+window.addEventListener('keydown', initAudio);
 
-            enemies.push({
-                x: x,
-                y: y,
-                radius: 12,
-                speed: 1.5 + Math.random() * 1.5,
-                color: '#ff3333'
-            });
-        }
+function playTone(freq, duration, type = 'sine', volume = 0.1) {
+    if (!audioInitialized) return;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+    gain.gain.setValueAtTime(volume, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + duration);
+}
 
-        function createExplosion(x, y, color) {
-            for (let i = 0; i < 15; i++) {
-                particles.push({
-                    x: x,
-                    y: y,
-                    radius: Math.random() * 3 + 1,
-                    color: color,
-                    dx: (Math.random() - 0.5) * 5,
-                    dy: (Math.random() - 0.5) * 5,
-                    life: 30
-                });
+function playNoise(duration, volume = 0.1) {
+    if (!audioInitialized) return;
+    const bufferSize = audioCtx.sampleRate * duration;
+    const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+    const noise = audioCtx.createBufferSource();
+    noise.buffer = buffer;
+    const gain = audioCtx.createGain();
+    gain.gain.setValueAtTime(volume, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+    noise.connect(gain);
+    gain.connect(audioCtx.destination);
+    noise.start();
+}
+
+const sounds = {
+    break: () => playNoise(0.2, 0.2),
+    hazard: () => { playNoise(0.3, 0.2); playTone(150, 0.3, 'sawtooth', 0.2); },
+    explosion: () => { playNoise(0.4, 0.3); playTone(80, 0.4, 'sine', 0.3); },
+    crumble: () => playNoise(0.5, 0.2),
+    armor_pickup: () => { playTone(800, 0.1, 'sine', 0.1); setTimeout(()=>playTone(1200, 0.2, 'sine', 0.1), 100); },
+    reload: () => { playTone(1500, 0.05, 'square', 0.1); setTimeout(()=>playTone(2000, 0.05, 'square', 0.1), 150); },
+    empty_click: () => playTone(800, 0.05, 'square', 0.1),
+    platform_spawn: () => playTone(400, 0.3, 'sine', 0.1),
+    super_charge: () => { playTone(300, 0.3, 'sawtooth', 0.1); playTone(600, 0.3, 'sawtooth', 0.1); },
+    super_blast: () => { playNoise(0.5, 0.3); playTone(100, 0.5, 'sawtooth', 0.2); },
+    fireball: () => playNoise(0.3, 0.2),
+    fireball_impact: () => { playNoise(0.3, 0.3); playTone(100, 0.3, 'sawtooth', 0.2); },
+    nuke_explosion: () => { playNoise(1.0, 0.5); playTone(50, 1.0, 'sawtooth', 0.4); },
+    radiation_hiss: () => playNoise(0.2, 0.1)
+};
+
+// Game State
+let state = "select";
+let p1Wins = 0, p2Wins = 0;
+let p1Idx = 0, p2Idx = 0;
+let p1Ready = false, p2Ready = false;
+let selectConfirmTimer = 0;
+let stageIdx = 0, worldLocked = false, worldConfirmTimer = 0;
+let currentLavaY = GROUND_Y, lavaRiseTimer = LAVA_RISE_INTERVAL, lavaRiseWarning = 0;
+let cameraY = 0, targetCameraY = 0;
+let screenShakeX = 0, screenShakeY = 0, screenShakeDuration = 0, screenShakeIntensity = 0;
+let platforms = [], platformSpawnAnims = [];
+let weapons = [], armors = [], arrows = [], bombs = [], explosions = [], debris = [];
+let superBlasts = [], superExplosions = [], fireballs = [], fireExplosions = [];
+let nukeExplosions = [], radiationClouds = [];
+let spawnTimer = WEAPON_SPAWN_INTERVAL, armorSpawnTimer = ARMOR_SPAWN_INTERVAL;
+let fireballSpawnTimer = 0;
+let gameOver = false, winner = null;
+let p1, p2;
+
+const keys = {};
+window.addEventListener('keydown', e => {
+    keys[e.code] = true;
+    handleMenuInput(e.code);
+});
+window.addEventListener('keyup', e => { keys[e.code] = false; });
+
+function rectIntersect(r1, r2) {
+    return !(r2.x > r1.x + r1.w || r2.x + r2.w < r1.x || r2.y > r1.y + r1.h || r2.y + r2.h < r1.y);
+}
+
+function worldToScreen(worldY) { return worldY - cameraY; }
+
+function triggerScreenShake(intensity, duration) {
+    screenShakeIntensity = intensity;
+    screenShakeDuration = duration;
+}
+
+function updateScreenShake() {
+    if (screenShakeDuration > 0) {
+        screenShakeX = (Math.random() * 2 - 1) * screenShakeIntensity;
+        screenShakeY = (Math.random() * 2 - 1) * screenShakeIntensity;
+        screenShakeDuration--;
+    } else {
+        screenShakeX = 0; screenShakeY = 0;
+    }
+}
+
+function generateNewPlatforms() {
+    for (let i = platforms.length - 1; i >= 0; i--) {
+        if (platforms[i].y >= currentLavaY) platforms.splice(i, 1);
+    }
+    let needed = TARGET_PLATFORM_COUNT - platforms.length;
+    if (needed <= 0 || platforms.length >= MAX_PLATFORMS) return;
+    
+    let highestTop = platforms.length > 0 ? Math.min(...platforms.map(p => p.y)) : currentLavaY - 100;
+    let spawnZoneBottom = highestTop - 40;
+    let spawnZoneTop = Math.max(MIN_PLATFORM_Y, spawnZoneBottom - 180);
+    if (spawnZoneBottom <= spawnZoneTop + 20) {
+        spawnZoneTop = Math.max(MIN_PLATFORM_Y, currentLavaY - 350);
+        spawnZoneBottom = currentLavaY - 50;
+    }
+    
+    let newPlatforms = [];
+    let attempts = 0;
+    while (newPlatforms.length < needed && attempts < 80) {
+        attempts++;
+        const w = Math.floor(Math.random() * 71) + 80;
+        const h = [16, 18, 20][Math.floor(Math.random() * 3)];
+        const x = Math.floor(Math.random() * (WIDTH - 120 - w)) + 60;
+        const y = Math.floor(Math.random() * (Math.max(spawnZoneTop, spawnZoneBottom) - spawnZoneTop + 1)) + spawnZoneTop;
+        const newPlat = { x, y, w, h };
+        let overlap = false;
+        for (const existing of [...platforms, ...newPlatforms]) {
+            if (rectIntersect({x: newPlat.x - 15, y: newPlat.y - 25, w: newPlat.w + 30, h: newPlat.h + 50}, existing)) {
+                overlap = true; break;
             }
         }
-
-        function restartGame() {
-            player.x = canvas.width / 2;
-            player.y = canvas.height / 2;
-            bullets = [];
-            enemies = [];
-            particles = [];
-            score = 0;
-            scoreElement.innerText = score;
-            gameOver = false;
+        if (!overlap) {
+            newPlatforms.push(newPlat);
+            platformSpawnAnims.push({ plat: newPlat, frames: 25 });
         }
+    }
+    platforms.push(...newPlatforms);
+    if (newPlatforms.length > 0) sounds.platform_spawn();
+}
 
-        // --- UPDATE LOOP ---
-        function update() {
-            if (gameOver) return;
+function updateCamera() {
+    const highestPlayerY = Math.min(p1.y, p2.y);
+    targetCameraY = Math.max(0, highestPlayerY - CAMERA_TARGET_OFFSET);
+    cameraY += (targetCameraY - cameraY) * CAMERA_SMOOTHING;
+}
 
-            // 1. Player Movement
-            if (keys['w'] && player.y - player.radius > 0) player.y -= player.speed;
-            if (keys['s'] && player.y + player.radius < canvas.height) player.y += player.speed;
-            if (keys['a'] && player.x - player.radius > 0) player.x -= player.speed;
-            if (keys['d'] && player.x + player.radius < canvas.width) player.x += player.speed;
-
-            // 2. Shooting
-            if (shootCooldown > 0) shootCooldown--;
-            if (mouse.down && shootCooldown <= 0) {
-                const angle = getAngle(player.x, player.y, mouse.x, mouse.y);
-                bullets.push({
-                    x: player.x,
-                    y: player.y,
-                    radius: 4,
-                    speed: 8,
-                    dx: Math.cos(angle) * 8,
-                    dy: Math.sin(angle) * 8,
-                    color: '#ffff00'
-                });
-                shootCooldown = 10; // Fire rate limit
+class Fighter {
+    constructor(x, color, darkColor, facing, controls, name) {
+        this.x = x; this.y = GROUND_Y; this.vel_y = 0;
+        this.width = 40; this.height = 110;
+        this.color = color; this.darkColor = darkColor; this.facing = facing;
+        this.controls = controls; this.name = name; this.health = MAX_HEALTH;
+        this.on_ground = true; this.punch_cd = 0; this.kick_cd = 0;
+        this.attack_anim = 0; this.attack_type = null; this.hit_stun = 0;
+        this.walk_cycle = 0; this.moving = false; this.wins = 0;
+        this.weapon = null; this.armor = null; this.armor_flash = 0;
+        this.reload_timer = 0; this.super_charge = 0; this.super_cooldown = 0;
+        this.super_flash = 0; this.radiation_flash = 0;
+    }
+    getRect() { return { x: this.x - this.width / 2, y: this.y - this.height, w: this.width, h: this.height }; }
+    currentStats() {
+        if (this.weapon) {
+            const info = WEAPON_TYPES[this.weapon.type];
+            return { reach: info.reach, damage: info.damage, cooldown: info.cooldown };
+        }
+        return { reach: PUNCH_RANGE, damage: PUNCH_DAMAGE, cooldown: PUNCH_COOLDOWN };
+    }
+    attackHitbox() {
+        if (this.attack_type === "weapon" && this.weapon) {
+            const reach = this.currentStats().reach;
+            return { x: this.facing === 1 ? this.x : this.x - reach, y: this.y - this.height * 0.6 - 12, w: reach, h: 24 };
+        } else if (this.attack_type === "punch") {
+            return { x: this.facing === 1 ? this.x : this.x - PUNCH_RANGE, y: this.y - this.height * 0.65 - 10, w: PUNCH_RANGE, h: 20 };
+        } else if (this.attack_type === "kick") {
+            return { x: this.facing === 1 ? this.x : this.x - KICK_RANGE, y: this.y - this.height * 0.35 - 13, w: KICK_RANGE, h: 26 };
+        }
+        return null;
+    }
+    tryPickupWeapon(wList) {
+        if (this.weapon) return;
+        for (let i = wList.length - 1; i >= 0; i--) {
+            if (rectIntersect(this.getRect(), wList[i].getRect())) {
+                const info = WEAPON_TYPES[wList[i].type];
+                this.weapon = { type: wList[i].type, durability: info.durability, current_mag: info.mag_size || 0 };
+                wList.splice(i, 1); return;
             }
-
-            // 3. Update Bullets
-            for (let i = bullets.length - 1; i >= 0; i--) {
-                let b = bullets[i];
-                b.x += b.dx;
-                b.y += b.dy;
-                // Remove if off-screen
-                if (b.x < 0 || b.x > canvas.width || b.y < 0 || b.y > canvas.height) {
-                    bullets.splice(i, 1);
+        }
+    }
+    tryPickupArmor(aList) {
+        for (let i = aList.length - 1; i >= 0; i--) {
+            if (rectIntersect(this.getRect(), aList[i].getRect())) {
+                const info = ARMOR_TYPES[aList[i].type];
+                this.armor = { type: aList[i].type, durability: info.durability };
+                this.armor_flash = 12;
+                aList.splice(i, 1);
+                sounds.armor_pickup(); return;
+            }
+        }
+    }
+    isRanged() { return this.weapon && WEAPON_TYPES[this.weapon.type].ranged; }
+    isReloading() { return this.reload_timer > 0; }
+    isSuperReady() { return this.super_charge >= MAX_SUPER_CHARGE && this.super_cooldown === 0; }
+    startReload() {
+        if (this.weapon && WEAPON_TYPES[this.weapon.type].mag_size > 0) {
+            this.reload_timer = RELOAD_TIME; sounds.reload();
+        }
+    }
+    shoot(aList) {
+        const info = WEAPON_TYPES[this.weapon.type];
+        const spawnX = this.x + this.facing * 26;
+        const spawnY = this.y - this.height * 0.6 + (this.weapon.type === "gatling" ? (Math.random()*12-6) : (this.weapon.type === "uzi" ? (Math.random()*6-3) : 0));
+        aList.push(new Arrow(spawnX, spawnY, this.facing, info.damage, this, info.proj_speed, info.proj_kind));
+        this.weapon.current_mag--;
+        if (this.weapon.current_mag <= 0) this.startReload();
+    }
+    throwBomb(bList) {
+        const info = WEAPON_TYPES[this.weapon.type];
+        const spawnX = this.x + this.facing * 20;
+        const spawnY = this.y - this.height * 0.7;
+        if (info.proj_kind === "nuke") bList.push(new Nuke(spawnX, spawnY, this.facing, info.damage, this));
+        else bList.push(new Bomb(spawnX, spawnY, this.facing, info.damage, this));
+        this.weapon.durability--;
+        if (this.weapon.durability <= 0) { this.weapon = null; sounds.break(); }
+    }
+    fireSuper(sbList) {
+        sbList.push(new SuperBlast(this.x + this.facing * 30, this.y - this.height * 0.55, this.facing, this));
+        this.super_charge = 0; this.super_cooldown = 30; this.super_flash = 20;
+        this.attack_type = "super"; this.attack_anim = 20;
+    }
+    handleInput(opponent, wList, aList, aRows, bList, sbList) {
+        if (this.hit_stun > 0) { this.hit_stun--; this.moving = false; return; }
+        const c = this.controls; this.moving = false;
+        if (keys[c.left]) { this.x -= MOVE_SPEED; this.facing = -1; this.moving = true; }
+        if (keys[c.right]) { this.x += MOVE_SPEED; this.facing = 1; this.moving = true; }
+        this.x = Math.max(this.width, Math.min(WIDTH - this.width, this.x));
+        if (keys[c.jump] && this.on_ground) { this.vel_y = JUMP_STRENGTH; this.on_ground = false; }
+        if (keys[c.super] && this.isSuperReady()) {
+            this.fireSuper(sbList); sounds.super_blast(); this.punch_cd = Math.max(this.punch_cd, 25);
+        } else if (this.punch_cd === 0 && keys[c.punch]) {
+            if (this.isReloading()) {}
+            else if (this.weapon && (this.weapon.type === "bomb" || this.weapon.type === "nuke")) {
+                this.attack_type = "throw"; this.attack_anim = 15; this.throwBomb(bList);
+            } else if (this.isRanged()) {
+                if (this.weapon.current_mag !== undefined && this.weapon.current_mag <= 0) { this.startReload(); sounds.empty_click(); }
+                else {
+                    this.attack_type = "shoot"; this.attack_anim = 10; this.shoot(aRows);
+                    this.weapon.durability--;
+                    if (this.weapon.durability <= 0) { this.weapon = null; sounds.break(); }
                 }
-            }
-
-            // 4. Spawn & Update Enemies
-            spawnTimer++;
-            if (spawnTimer > 60) { // Spawn an enemy roughly every second
-                spawnEnemy();
-                spawnTimer = 0;
-            }
-
-            for (let i = enemies.length - 1; i >= 0; i--) {
-                let e = enemies[i];
-                const angle = getAngle(e.x, e.y, player.x, player.y);
-                e.x += Math.cos(angle) * e.speed;
-                e.y += Math.sin(angle) * e.speed;
-
-                // Check collision with Player
-                if (distance(e.x, e.y, player.x, player.y) < e.radius + player.radius) {
-                    createExplosion(player.x, player.y, '#00ff00');
-                    gameOver = true;
-                }
-            }
-
-            // 5. Bullet vs Enemy Collision
-            for (let i = bullets.length - 1; i >= 0; i--) {
-                for (let j = enemies.length - 1; j >= 0; j--) {
-                    if (distance(bullets[i].x, bullets[i].y, enemies[j].x, enemies[j].y) < bullets[i].radius + enemies[j].radius) {
-                        createExplosion(enemies[j].x, enemies[j].y, '#ff3333');
-                        bullets.splice(i, 1);
-                        enemies.splice(j, 1);
-                        score += 10;
-                        scoreElement.innerText = score;
-                        break; // Bullet is gone, stop checking it
-                    }
-                }
-            }
-
-            // 6. Update Particles
-            for (let i = particles.length - 1; i >= 0; i--) {
-                let p = particles[i];
-                p.x += p.dx;
-                p.y += p.dy;
-                p.life--;
-                if (p.life <= 0) particles.splice(i, 1);
+            } else if (this.weapon) { this.attack_type = "weapon"; this.attack_anim = 12; }
+            else { this.attack_type = "punch"; this.attack_anim = 10; }
+            this.punch_cd = this.currentStats().cooldown;
+        }
+        if (this.kick_cd === 0 && keys[c.kick]) { this.attack_type = "kick"; this.attack_anim = 14; this.kick_cd = KICK_COOLDOWN; }
+        this.tryPickupWeapon(wList); this.tryPickupArmor(aList);
+    }
+    physics() {
+        this.vel_y += GRAVITY; this.y += this.vel_y; this.on_ground = false;
+        for (const plat of platforms) {
+            const prevY = this.y - this.vel_y;
+            if (prevY <= plat.y && this.y >= plat.y && plat.x <= this.x && this.x <= plat.x + plat.w && this.vel_y >= 0) {
+                this.y = plat.y; this.vel_y = 0; this.on_ground = true; break;
             }
         }
-
-        // --- DRAW LOOP ---
-        function draw() {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-            // Draw Particles
-            particles.forEach(p => {
-                ctx.globalAlpha = p.life / 30;
-                ctx.fillStyle = p.color;
-                ctx.beginPath();
-                ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
-                ctx.fill();
-            });
-            ctx.globalAlpha = 1;
-
-            // Draw Bullets
-            bullets.forEach(b => {
-                ctx.fillStyle = b.color;
-                ctx.beginPath();
-                ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
-                ctx.fill();
-            });
-
-            // Draw Enemies
-            enemies.forEach(e => {
-                ctx.fillStyle = e.color;
-                ctx.beginPath();
-                ctx.arc(e.x, e.y, e.radius, 0, Math.PI * 2);
-                ctx.fill();
-                // Enemy "eye" to make them look menacing
-                ctx.fillStyle = '#000';
-                ctx.beginPath();
-                ctx.arc(e.x, e.y, e.radius / 2, 0, Math.PI * 2);
-                ctx.fill();
-            });
-
-            // Draw Player
-            const angle = getAngle(player.x, player.y, mouse.x, mouse.y);
-            
-            // Player Body
-            ctx.fillStyle = player.color;
+        if (!this.on_ground && this.y >= currentLavaY) this.hazardHit();
+        if (this.punch_cd > 0) this.punch_cd--;
+        if (this.kick_cd > 0) this.kick_cd--;
+        if (this.armor_flash > 0) this.armor_flash--;
+        if (this.super_cooldown > 0) this.super_cooldown--;
+        if (this.super_flash > 0) this.super_flash--;
+        if (this.radiation_flash > 0) this.radiation_flash--;
+        if (this.reload_timer > 0) {
+            this.reload_timer--;
+            if (this.reload_timer === 0 && this.weapon) {
+                this.weapon.current_mag = WEAPON_TYPES[this.weapon.type].mag_size || 0;
+            }
+        }
+        if (this.attack_anim > 0) {
+            this.attack_anim--;
+            if (this.attack_anim === 0) this.attack_type = null;
+        }
+        if (this.moving && this.on_ground) this.walk_cycle += 0.25;
+        else this.walk_cycle = 0;
+    }
+    registerWeaponHit() {
+        if (this.weapon) {
+            this.weapon.durability--;
+            if (this.weapon.durability <= 0) { this.weapon = null; sounds.break(); }
+        }
+    }
+    addSuperCharge(amount) {
+        const wasReady = this.super_charge >= MAX_SUPER_CHARGE;
+        this.super_charge = Math.min(MAX_SUPER_CHARGE, this.super_charge + amount);
+        if (!wasReady && this.super_charge >= MAX_SUPER_CHARGE) sounds.super_charge();
+    }
+    takeHit(damage, fromLeft) {
+        if (this.armor) {
+            const info = ARMOR_TYPES[this.armor.type];
+            const absorbed = Math.min(damage, info.absorb);
+            damage -= absorbed; this.armor.durability--; this.armor_flash = 10;
+            if (this.armor.durability <= 0) { this.armor = null; sounds.break(); }
+        }
+        this.health = Math.max(0, this.health - damage);
+        this.hit_stun = HIT_STUN;
+        const push = fromLeft ? 8 : -8;
+        this.x = Math.max(this.width, Math.min(WIDTH - this.width, this.x + push));
+    }
+    hazardHit() {
+        this.health = Math.max(0, this.health - HAZARD_DAMAGE);
+        this.hit_stun = HAZARD_STUN;
+        const safePlatforms = platforms.filter(p => p.y < currentLavaY - 20);
+        if (safePlatforms.length > 0) {
+            const best = safePlatforms.reduce((prev, curr) => prev.y < curr.y ? prev : curr);
+            this.x = best.x + best.w / 2; this.y = best.y;
+        } else {
+            this.x = 500; this.y = Math.max(MIN_PLATFORM_Y + 20, currentLavaY - 50);
+        }
+        this.vel_y = JUMP_STRENGTH * 0.5; this.on_ground = false;
+        sounds.hazard();
+    }
+    draw(ctx) {
+        const screenY = worldToScreen(this.y);
+        if (screenY < -150 || screenY > HEIGHT + 150) return;
+        
+        if (this.radiation_flash > 0) {
+            ctx.fillStyle = rgba(120, 220, 80, 180 * (this.radiation_flash / 15) / 255);
+            ctx.beginPath(); ctx.ellipse(this.x, screenY - this.height / 2, 40, 65, 0, 0, Math.PI * 2); ctx.fill();
+        }
+        let color = this.hit_stun > 0 ? this.darkColor : this.color;
+        if (this.radiation_flash > 8) color = rgb(Math.max(0, parseInt(color.match(/\d+/g)[0]) - 60), Math.min(255, parseInt(color.match(/\d+/g)[1]) + 60), Math.max(0, parseInt(color.match(/\d+/g)[2]) - 60));
+        
+        const cx = this.x, headR = 16, hipY = screenY - 55, shoulderY = screenY - 85, headY = shoulderY - headR - 4;
+        
+        if (this.isSuperReady()) {
+            ctx.fillStyle = "rgba(180, 80, 255, 0.4)";
+            ctx.beginPath(); ctx.ellipse(cx, screenY - this.height / 2, 50, 70, 0, 0, Math.PI * 2); ctx.fill();
+        }
+        
+        const swing = this.moving ? Math.sin(this.walk_cycle) * 18 : 0;
+        const legSpread = this.on_ground ? 14 : 8;
+        let frontLegX = cx + legSpread + swing, backLegX = cx - legSpread - swing, frontLegY = screenY, backLegY = screenY;
+        if (this.attack_type === "kick") { frontLegX = cx + this.facing * KICK_RANGE * 0.8; frontLegY = screenY - 40; }
+        
+        ctx.strokeStyle = color; ctx.lineWidth = 6; ctx.beginPath();
+        ctx.moveTo(cx, hipY); ctx.lineTo(frontLegX, frontLegY);
+        ctx.moveTo(cx, hipY); ctx.lineTo(backLegX, backLegY);
+        ctx.moveTo(cx, hipY); ctx.lineTo(cx, shoulderY); ctx.stroke();
+        
+        let fwdHandX, fwdHandY, backHandX, backHandY;
+        if (this.attack_type === "super") { fwdHandX = cx + this.facing * 40; fwdHandY = shoulderY + 5; backHandX = cx + this.facing * 30; backHandY = shoulderY + 15; }
+        else if (this.attack_type === "weapon" && this.weapon) { const reach = this.currentStats().reach; fwdHandX = cx + this.facing * reach * 0.6; fwdHandY = shoulderY + 10; backHandX = cx - 10; backHandY = shoulderY + 20; }
+        else if (this.attack_type === "punch") { fwdHandX = cx + this.facing * PUNCH_RANGE * 0.9; fwdHandY = shoulderY + 10; backHandX = cx - 12; backHandY = shoulderY + 20; }
+        else if (this.attack_type === "shoot") { fwdHandX = cx + this.facing * 26; fwdHandY = shoulderY + 4; backHandX = cx - this.facing * 14; backHandY = shoulderY + 10; }
+        else if (this.attack_type === "throw") { fwdHandX = cx + this.facing * 20; fwdHandY = shoulderY - 10; backHandX = cx - this.facing * 10; backHandY = shoulderY + 10; }
+        else if (this.isReloading()) { fwdHandX = cx + this.facing * 8; fwdHandY = shoulderY + 30; backHandX = cx - this.facing * 6; backHandY = shoulderY + 28; }
+        else { const armSwing = this.moving ? Math.sin(this.walk_cycle + Math.PI) * 14 : 0; fwdHandX = cx + 14 + armSwing; fwdHandY = shoulderY + 22; backHandX = cx - 14 - armSwing; backHandY = shoulderY + 22; }
+        
+        ctx.beginPath(); ctx.moveTo(cx, shoulderY); ctx.lineTo(fwdHandX, fwdHandY); ctx.moveTo(cx, shoulderY); ctx.lineTo(backHandX, backHandY); ctx.stroke();
+        
+        ctx.fillStyle = color; ctx.beginPath(); ctx.arc(cx, headY, headR, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = "black"; ctx.lineWidth = 2; ctx.stroke();
+        ctx.fillStyle = "black"; ctx.beginPath(); ctx.arc(cx + this.facing * 6, headY - 2, 2, 0, Math.PI * 2); ctx.fill();
+        
+        if (this.weapon && this.attack_type !== "super") {
+            const info = WEAPON_TYPES[this.weapon.type];
+            ctx.strokeStyle = info.color; ctx.lineWidth = this.weapon.type === "uzi" || this.weapon.type === "gatling" ? 8 : 5;
             ctx.beginPath();
-            ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
-            ctx.fill();
-
-            // Player Gun Barrel
-            ctx.strokeStyle = '#ffffff';
-            ctx.lineWidth = 4;
-            ctx.beginPath();
-            ctx.moveTo(player.x, player.y);
-            ctx.lineTo(player.x + Math.cos(angle) * 25, player.y + Math.sin(angle) * 25);
+            if (this.attack_type === "weapon") { ctx.moveTo(fwdHandX, fwdHandY); ctx.lineTo(cx + this.facing * info.reach, shoulderY + 10); }
+            else { ctx.moveTo(fwdHandX, fwdHandY); ctx.lineTo(fwdHandX + this.facing * 25, fwdHandY); }
             ctx.stroke();
+        }
+    }
+}
 
-            // Game Over Screen
-            if (gameOver) {
-                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
-                
-                ctx.fillStyle = '#fff';
-                ctx.font = '48px Arial';
-                ctx.textAlign = 'center';
-                ctx.fillText('GAME OVER', canvas.width / 2, canvas.height / 2 - 20);
-                
-                ctx.font = '24px Arial';
-                ctx.fillText('Final Score: ' + score, canvas.width / 2, canvas.height / 2 + 20);
-                ctx.fillText('Click to Restart', canvas.width / 2, canvas.height / 2 + 60);
+class Arrow {
+    constructor(x, y, facing, damage, owner, speed, kind) {
+        this.x = x; this.y = y; this.facing = facing; this.damage = damage; this.owner = owner;
+        this.kind = kind; this.speed = speed || 15; this.length = kind === "arrow" ? 34 : 16; this.dead = false;
+    }
+    update() {
+        this.x += this.speed * this.facing;
+        if (this.x < -50 || this.x > WIDTH + 50) this.dead = true;
+    }
+    getRect() {
+        const front = this.x + this.facing * this.length;
+        return { x: Math.min(this.x, front), y: this.y - (this.kind === "arrow" ? 4 : 3), w: this.length, h: this.kind === "arrow" ? 8 : 6 };
+    }
+    draw(ctx) {
+        const screenY = worldToScreen(this.y);
+        if (screenY < -50 || screenY > HEIGHT + 50) return;
+        ctx.strokeStyle = this.kind === "bullet" ? rgb(255, 210, 90) : rgb(80, 50, 20);
+        ctx.lineWidth = this.kind === "bullet" ? 3 : 3;
+        ctx.beginPath(); ctx.moveTo(this.x, screenY); ctx.lineTo(this.x + this.facing * this.length, screenY); ctx.stroke();
+    }
+}
+
+class Bomb {
+    constructor(x, y, facing, damage, owner, isNuke = false) {
+        this.x = x; this.y = y; this.vel_x = facing * (isNuke ? 7 : 9); this.vel_y = isNuke ? -8 : -11;
+        this.damage = damage; this.owner = owner; this.isNuke = isNuke;
+        this.timer = isNuke ? 90 : 70; this.dead = false; this.exploded = false; this.life = 0;
+    }
+    update() {
+        if (this.exploded) return;
+        this.life++; this.vel_y += GRAVITY * (this.isNuke ? 0.3 : 1); this.x += this.vel_x; this.y += this.vel_y; this.timer--;
+        for (const plat of platforms) {
+            if (plat.x <= this.x && this.x <= plat.x + plat.w && this.y >= plat.y && this.vel_y >= 0) {
+                if (this.y - this.vel_y <= plat.y + 10) { this.y = plat.y; this.vel_y = 0; this.vel_x *= this.isNuke ? 0.5 : 0.7; this.timer -= this.isNuke ? 5 : 3; }
             }
         }
-
-        // --- MAIN GAME LOOP ---
-        function gameLoop() {
-            update();
-            draw();
-            requestAnimationFrame(gameLoop);
+        if (this.y >= currentLavaY || this.timer <= 0) { this.exploded = true; this.dead = true; }
+    }
+    explode() {
+        if (this.isNuke) {
+            sounds.nuke_explosion(); triggerScreenShake(20, 60);
+            return [new NukeExplosion(this.x, this.y, this.damage, this.owner), new RadiationCloud(this.x, this.y)];
+        } else {
+            sounds.explosion(); return new Explosion(this.x, this.y, this.damage, this.owner);
         }
+    }
+    draw(ctx) {
+        const screenY = worldToScreen(this.y);
+        if (screenY < -50 || screenY > HEIGHT + 50) return;
+        ctx.fillStyle = this.isNuke ? rgb(180, 40, 40) : rgb(30, 30, 30);
+        ctx.beginPath(); ctx.arc(this.x, screenY, this.isNuke ? 12 : 8, 0, Math.PI * 2); ctx.fill();
+        if (this.timer % 8 < 4) { ctx.fillStyle = rgb(255, 200, 50); ctx.beginPath(); ctx.arc(this.x + this.vel_x * 0.4, screenY - 9, 3, 0, Math.PI * 2); ctx.fill(); }
+    }
+}
+class Nuke extends Bomb { constructor(x, y, facing, damage, owner) { super(x, y, facing, damage, owner, true); } }
 
-        gameLoop();
-    </script>
+class Explosion {
+    constructor(x, y, damage, owner, isNuke = false) {
+        this.x = x; this.y = y; this.damage = damage; this.owner = owner; this.isNuke = isNuke;
+        this.radius = 10; this.max_radius = isNuke ? NUKE_IMPACT_RADIUS : 110;
+        this.life = isNuke ? 60 : 20; this.has_damaged = false; this.has_destroyed_platforms = false;
+        this.mushroom_stem_height = 0; this.mushroom_cap_radius = 0;
+    }
+    update() {
+        this.life--;
+        if (this.life > (this.isNuke ? 40 : 10)) this.radius += (this.max_radius - this.radius) * (this.isNuke ? 0.25 : 0.4);
+        else this.radius += (this.max_radius - this.radius) * (this.isNuke ? 0.08 : 0.1);
+        
+        if (this.isNuke && this.life > 30) { this.mushroom_stem_height = Math.min(200, this.mushroom_stem_height + 8); this.mushroom_cap_radius = Math.min(80, this.mushroom_cap_radius + 3); }
+        
+        if (!this.has_damaged && this.life === (this.isNuke ? 59 : 19)) {
+            for (const target of [p1, p2]) {
+                const dist = Math.hypot(target.x - this.x, (target.y - target.height / 2) - this.y);
+                if (dist < this.max_radius) {
+                    const fromLeft = this.x < target.x;
+                    target.takeHit(this.damage, fromLeft);
+                    const distFactor = 1.0 - (dist / this.max_radius);
+                    const push = (fromLeft ? (this.isNuke ? NUKE_KNOCKBACK : 120) : -(this.isNuke ? NUKE_KNOCKBACK : 120)) * distFactor;
+                    target.x = Math.max(target.width, Math.min(WIDTH - target.width, target.x + push));
+                    target.vel_y = (this.isNuke ? NUKE_POP : -22) * distFactor;
+                }
+            }
+            this.has_damaged = true;
+        }
+        if (!this.has_destroyed_platforms && this.life === (this.isNuke ? 55 : 17)) {
+            const toDestroy = [];
+            for (const plat of platforms) {
+                const closestX = Math.max(plat.x, Math.min(this.x, plat.x + plat.w));
+                const closestY = Math.max(plat.y, Math.min(this.y, plat.y + plat.h));
+                if (Math.hypot(closestX - this.x, closestY - this.y) < this.max_radius * (this.isNuke ? 0.8 : 1.0)) toDestroy.push(plat);
+            }
+            if (platforms.length - toDestroy.length >= (this.isNuke ? 2 : 1)) {
+                for (const plat of toDestroy) {
+                    for (let i = 0; i < (this.isNuke ? 25 : 18); i++) {
+                        debris.push(new Debris(plat.x + Math.random() * plat.w, plat.y + Math.random() * plat.h, rgb(110, 90, 70)));
+                    }
+                    const idx = platforms.indexOf(plat); if (idx > -1) platforms.splice(idx, 1);
+                }
+                sounds.crumble();
+            }
+            this.has_destroyed_platforms = true;
+        }
+    }
+    draw(ctx) {
+        if (this.life <= 0) return;
+        const screenY = worldToScreen(this.y);
+        if (screenY < -this.max_radius || screenY > HEIGHT + this.max_radius) return;
+        const alpha = this.life / (this.isNuke ? 60 : 20);
+        
+        if (this.isNuke && this.mushroom_stem_height > 0) {
+            ctx.fillStyle = rgba(180, 120, 60, alpha * 0.7);
+            ctx.fillRect(this.x - 30, screenY - this.mushroom_stem_height, 60, this.mushroom_stem_height);
+            ctx.fillStyle = rgba(240, 180, 100, alpha * 0.6);
+            ctx.beginPath(); ctx.ellipse(this.x, screenY - this.mushroom_stem_height - this.mushroom_cap_radius, this.mushroom_cap_radius * 1.5, this.mushroom_cap_radius, 0, 0, Math.PI * 2); ctx.fill();
+        }
+        ctx.fillStyle = rgba(255, 100, 30, alpha * 0.9);
+        ctx.beginPath(); ctx.arc(this.x, screenY, this.radius, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = rgba(255, 200, 50, alpha * 0.85);
+        ctx.beginPath(); ctx.arc(this.x, screenY, this.radius * 0.7, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = rgba(255, 255, 220, alpha * 0.95);
+        ctx.beginPath(); ctx.arc(this.x, screenY, this.radius * 0.4, 0, Math.PI * 2); ctx.fill();
+    }
+}
+class NukeExplosion extends Explosion { constructor(x, y, damage, owner) { super(x, y, damage, owner, true); } }
+
+class RadiationCloud {
+    constructor(x, y) {
+        this.x = x; this.y = y; this.radius = NUKE_RADIATION_RADIUS; this.life = NUKE_RADIATION_DURATION;
+        this.tick_timer = 0; this.pulse = 0;
+        this.particles = [];
+        for (let i = 0; i < 15; i++) {
+            this.particles.push({ angle: Math.random() * Math.PI * 2, radius: Math.random() * this.radius * 0.9, speed: Math.random() * 0.015 + 0.005, size: Math.random() * 4 + 3, y_offset: Math.random() * 40 - 20 });
+        }
+    }
+    update() {
+        this.life--; this.pulse += 0.08;
+        for (const p of this.particles) p.angle += p.speed;
+        this.tick_timer++;
+        if (this.tick_timer >= NUKE_RADIATION_TICK) {
+            this.tick_timer = 0; let anyHit = false;
+            for (const target of [p1, p2]) {
+                if (Math.hypot(target.x - this.x, (target.y - target.height / 2) - this.y) < this.radius) {
+                    target.takeHit(NUKE_RADIATION_DAMAGE, this.x < target.x); target.radiation_flash = 15; anyHit = true;
+                }
+            }
+            if (anyHit) sounds.radiation_hiss();
+        }
+    }
+    draw(ctx) {
+        if (this.life <= 0) return;
+        const screenY = worldToScreen(this.y);
+        if (screenY < -this.radius * 1.5 || screenY > HEIGHT + this.radius * 1.5) return;
+        const alpha = this.life / NUKE_RADIATION_DURATION;
+        const pulseSize = this.radius * (1.0 + 0.08 * Math.sin(this.pulse));
+        
+        ctx.fillStyle = rgba(60, 140, 50, alpha * 0.5); ctx.beginPath(); ctx.arc(this.x, screenY, pulseSize, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = rgba(120, 200, 70, alpha * 0.45); ctx.beginPath(); ctx.arc(this.x, screenY, pulseSize * 0.75, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = rgba(180, 240, 90, alpha * 0.4); ctx.beginPath(); ctx.arc(this.x, screenY, pulseSize * 0.45, 0, Math.PI * 2); ctx.fill();
+        
+        if (this.life > 60) {
+            ctx.strokeStyle = rgba(255, 255, 0, alpha * 0.85); ctx.lineWidth = 3;
+            ctx.beginPath(); ctx.arc(this.x, screenY, 15, 0, Math.PI * 2); ctx.stroke();
+            for (let angle of [0, 120, 240]) {
+                const rad = angle * Math.PI / 180;
+                ctx.beginPath(); ctx.arc(this.x + Math.cos(rad) * 10, screenY + Math.sin(rad) * 10, 4, 0, Math.PI * 2); ctx.fill();
+            }
+        }
+    }
+}
+
+class SuperBlast {
+    constructor(x, y, facing, owner) {
+        this.x = x; this.y = y; this.facing = facing; this.owner = owner; this.speed = SUPER_BLAST_SPEED;
+        this.radius = 14; this.dead = false; this.exploded = false; this.life = 0; this.trail = [];
+    }
+    update() {
+        if (this.exploded) return;
+        this.life++; this.x += this.speed * this.facing; this.trail.push({x: this.x, y: this.y, tl: 20});
+        this.trail = this.trail.filter(t => { t.tl--; return t.tl > 0; });
+        for (const plat of platforms) {
+            if (plat.x <= this.x && this.x <= plat.x + plat.w && plat.y <= this.y && this.y <= plat.y + plat.h) { this.exploded = true; this.dead = true; return; }
+        }
+        if (this.x < -50 || this.x > WIDTH + 50) this.dead = true;
+    }
+    explode() { sounds.super_blast(); return new SuperExplosion(this.x, this.y, this.owner); }
+    getRect() { return { x: this.x - this.radius, y: this.y - this.radius, w: this.radius * 2, h: this.radius * 2 }; }
+    draw(ctx) {
+        const screenY = worldToScreen(this.y);
+        if (screenY < -100 || screenY > HEIGHT + 100) return;
+        for (const t of this.trail) {
+            const tsy = worldToScreen(t.y); const alpha = t.tl / 20; const r = this.radius * alpha * 0.7;
+            ctx.fillStyle = rgba(200, 100, 255, alpha); ctx.beginPath(); ctx.arc(t.x, tsy, r, 0, Math.PI * 2); ctx.fill();
+        }
+        if (!this.exploded) {
+            const pulse = 1.0 + 0.15 * Math.sin(this.life * 0.4); const coreR = this.radius * pulse;
+            ctx.fillStyle = rgba(180, 80, 255, 0.5); ctx.beginPath(); ctx.arc(this.x, screenY, coreR * 2, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = rgba(255, 220, 255, 0.9); ctx.beginPath(); ctx.arc(this.x, screenY, coreR / 2, 0, Math.PI * 2); ctx.fill();
+        }
+    }
+}
+
+class SuperExplosion {
+    constructor(x, y, owner) {
+        this.x = x; this.y = y; this.owner = owner; this.radius = 10; this.max_radius = SUPER_BLAST_RADIUS;
+        this.life = 30; this.has_damaged = false;
+    }
+    update() {
+        this.life--;
+        if (this.life > 15) this.radius += (this.max_radius - this.radius) * 0.35;
+        else this.radius += (this.max_radius - this.radius) * 0.08;
+        if (!this.has_damaged && this.life === 29) {
+            for (const target of [p1, p2]) {
+                const dist = Math.hypot(target.x - this.x, (target.y - target.height / 2) - this.y);
+                if (dist < this.max_radius) {
+                    const fromLeft = this.x < target.x; target.takeHit(SUPER_DAMAGE, fromLeft);
+                    const distFactor = 1.0 - (dist / this.max_radius);
+                    const push = (fromLeft ? SUPER_KNOCKBACK : -SUPER_KNOCKBACK) * distFactor;
+                    target.x = Math.max(target.width, Math.min(WIDTH - target.width, target.x + push));
+                    target.vel_y = SUPER_POP * distFactor;
+                }
+            }
+            this.has_damaged = true;
+        }
+    }
+    draw(ctx) {
+        if (this.life <= 0) return;
+        const screenY = worldToScreen(this.y);
+        if (screenY < -this.max_radius || screenY > HEIGHT + this.max_radius) return;
+        const alpha = this.life / 30;
+        ctx.fillStyle = rgba(150, 40, 200, alpha); ctx.beginPath(); ctx.arc(this.x, screenY, this.radius, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = rgba(255, 200, 255, alpha * 0.9); ctx.beginPath(); ctx.arc(this.x, screenY, this.radius * 0.3, 0, Math.PI * 2); ctx.fill();
+    }
+}
+
+class Fireball {
+    constructor(x, y) {
+        this.x = x; this.y = y; this.vel_y = FIREBALL_FALL_SPEED + Math.random() * 2 - 1;
+        this.radius = FIREBALL_RADIUS; this.dead = false; this.exploded = false; this.life = 0; this.trail = [];
+    }
+    update() {
+        if (this.exploded) return;
+        this.life++; this.y += this.vel_y; this.vel_y += 0.15;
+        this.trail.push({x: this.x + Math.random()*8-4, y: this.y + Math.random()*8-4, tl: 15, ts: Math.random()*5+4});
+        this.trail = this.trail.filter(t => { t.tl--; return t.tl > 0; });
+        for (const plat of platforms) {
+            if (plat.x <= this.x && this.x <= plat.x + plat.w && plat.y <= this.y && this.y <= plat.y + plat.h) { this.exploded = true; this.dead = true; return; }
+        }
+        for (const target of [p1, p2]) {
+            if (target.hit_stun === 0 && Math.hypot(target.x - this.x, (target.y - target.height / 2) - this.y) < this.radius + 25) {
+                target.takeHit(FIREBALL_DAMAGE, this.x < target.x);
+                target.x = Math.max(target.width, Math.min(WIDTH - target.width, target.x + (this.x < target.x ? 40 : -40)));
+                target.vel_y = -10; this.exploded = true; this.dead = true; return;
+            }
+        }
+        if (this.y > currentLavaY + 50) this.dead = true;
+    }
+    explode() { sounds.fireball_impact(); return new FireExplosion(this.x, this.y); }
+    draw(ctx) {
+        const screenY = worldToScreen(this.y);
+        if (screenY < -100 || screenY > HEIGHT + 100) return;
+        for (const t of this.trail) {
+            const tsy = worldToScreen(t.y); const alpha = t.tl / 15;
+            ctx.fillStyle = rgba(255, 180 * alpha, 40 * alpha, alpha);
+            ctx.beginPath(); ctx.arc(t.x, tsy, t.ts, 0, Math.PI * 2); ctx.fill();
+        }
+        if (!this.exploded) {
+            const pulse = 1.0 + 0.1 * Math.sin(this.life * 0.5); const r = this.radius * pulse;
+            ctx.fillStyle = rgba(255, 80, 20, 0.3); ctx.beginPath(); ctx.arc(this.x, screenY, r * 2, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = rgba(255, 230, 100, 0.9); ctx.beginPath(); ctx.arc(this.x, screenY, r / 2, 0, Math.PI * 2); ctx.fill();
+        }
+    }
+}
+
+class FireExplosion {
+    constructor(x, y) {
+        this.x = x; this.y = y; this.radius = 5; this.max_radius = FIREBALL_IMPACT_RADIUS; this.life = 18;
+    }
+    update() {
+        this.life--;
+        if (this.life > 8) this.radius += (this.max_radius - this.radius) * 0.35;
+        else this.radius += (this.max_radius - this.radius) * 0.1;
+    }
+    draw(ctx) {
+        if (this.life <= 0) return;
+        const screenY = worldToScreen(this.y);
+        if (screenY < -this.max_radius || screenY > HEIGHT + this.max_radius) return;
+        const alpha = this.life / 18;
+        ctx.fillStyle = rgba(200, 50, 10, alpha); ctx.beginPath(); ctx.arc(this.x, screenY, this.radius, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = rgba(255, 220, 80, alpha * 0.9); ctx.beginPath(); ctx.arc(this.x, screenY, this.radius * 0.4, 0, Math.PI * 2); ctx.fill();
+    }
+}
+
+class Debris {
+    constructor(x, y, color) {
+        this.x = x; this.y = y; this.vel_x = Math.random() * 16 - 8; this.vel_y = Math.random() * 8 - 10;
+        this.size = Math.random() * 6 + 4; this.color = color; this.rotation = Math.random() * 360;
+        this.rot_speed = Math.random() * 30 - 15; this.life = Math.random() * 30 + 40;
+    }
+    update() {
+        this.vel_y += GRAVITY * 0.8; this.x += this.vel_x; this.y += this.vel_y;
+        this.rotation += this.rot_speed; this.life--; this.vel_x *= 0.98;
+    }
+    draw(ctx) {
+        if (this.life <= 0) return;
+        const screenY = worldToScreen(this.y);
+        if (screenY < -50 || screenY > HEIGHT + 50) return;
+        ctx.save(); ctx.translate(this.x, screenY); ctx.rotate(this.rotation * Math.PI / 180);
+        ctx.fillStyle = this.color; ctx.globalAlpha = Math.min(1, this.life / 20);
+        ctx.fillRect(-this.size/2, -this.size/2, this.size, this.size);
+        ctx.restore(); ctx.globalAlpha = 1;
+    }
+}
+
+class WeaponPickup {
+    constructor(x, y, type) { this.x = x; this.y = y; this.type = type; }
+    getRect() { return { x: this.x - 20, y: this.y - 40, w: 40, h: 40 }; }
+    draw(ctx) {
+        const screenY = worldToScreen(this.y);
+        if (screenY < -80 || screenY > HEIGHT + 80) return;
+        const info = WEAPON_TYPES[this.type];
+        ctx.fillStyle = rgba(240, 200, 40, 0.2); ctx.beginPath(); ctx.arc(this.x, screenY - 20, 30, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = info.color; ctx.fillRect(this.x - 10, screenY - 35, 20, 30);
+        ctx.fillStyle = BLACK; ctx.font = "12px Arial"; ctx.textAlign = "center";
+        ctx.fillText(this.type.charAt(0).toUpperCase() + this.type.slice(1), this.x, screenY - 45);
+    }
+}
+
+class ArmorPickup {
+    constructor(x, y, type) { this.x = x; this.y = y; this.type = type; }
+    getRect() { return { x: this.x - 20, y: this.y - 40, w: 40, h: 40 }; }
+    draw(ctx) {
+        const screenY = worldToScreen(this.y);
+        if (screenY < -80 || screenY > HEIGHT + 80) return;
+        const info = ARMOR_TYPES[this.type];
+        ctx.fillStyle = info.color; ctx.beginPath(); ctx.arc(this.x, screenY - 20, 20, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = BLACK; ctx.font = "12px Arial"; ctx.textAlign = "center";
+        ctx.fillText(info.name, this.x, screenY - 45);
+    }
+}
+
+function checkHits() {
+    for (const [attacker, defender] of [[p1, p2], [p2, p1]]) {
+        if (!["punch", "kick", "weapon"].includes(attacker.attack_type)) continue;
+        const isWeapon = attacker.attack_type === "weapon";
+        const triggerFrame = isWeapon ? 11 : (attacker.attack_type === "punch" ? 9 : 12);
+        if (attacker.attack_anim === triggerFrame) {
+            const box = attacker.attackHitbox();
+            if (box && rectIntersect(box, defender.getRect()) && defender.hit_stun === 0) {
+                const dmg = attacker.currentStats().damage;
+                defender.takeHit(dmg, attacker.x < defender.x);
+                if (attacker.attack_type === "punch") attacker.addSuperCharge(SUPER_CHARGE_PER_PUNCH);
+                else if (attacker.attack_type === "kick") attacker.addSuperCharge(SUPER_CHARGE_PER_KICK);
+                else if (isWeapon) { attacker.registerWeaponHit(); attacker.addSuperCharge(SUPER_CHARGE_PER_PROJECTILE); }
+            }
+        }
+    }
+}
+
+function updateArrows() {
+    for (let i = arrows.length - 1; i >= 0; i--) {
+        arrows[i].update();
+        const target = arrows[i].owner === p1 ? p2 : p1;
+        if (!arrows[i].dead && target.hit_stun === 0 && rectIntersect(arrows[i].getRect(), target.getRect())) {
+            target.takeHit(arrows[i].damage, arrows[i].facing === 1);
+            arrows[i].owner.addSuperCharge(SUPER_CHARGE_PER_PROJECTILE);
+            arrows[i].dead = true;
+        }
+        if (arrows[i].dead) arrows.splice(i, 1);
+    }
+}
+
+function updateSuperBlasts() {
+    for (let i = superBlasts.length - 1; i >= 0; i--) {
+        superBlasts[i].update();
+        const target = superBlasts[i].owner === p1 ? p2 : p1;
+        if (!superBlasts[i].dead && !superBlasts[i].exploded && target.hit_stun === 0 && rectIntersect(superBlasts[i].getRect(), target.getRect())) {
+            superBlasts[i].exploded = true; superBlasts[i].dead = true;
+        }
+        if (superBlasts[i].dead && !superBlasts[i].exploded) superBlasts.splice(i, 1);
+    }
+}
+
+function spawnWeapon() {
+    if (weapons.length >= MAX_WEAPONS_ON_FIELD || platforms.length === 0) return;
+    const plat = platforms[Math.floor(Math.random() * platforms.length)];
+    const type = Math.random() < 0.05 ? "nuke" : WEAPON_CHOICES[Math.floor(Math.random() * (WEAPON_CHOICES.length - 1)) + 1];
+    weapons.push(new WeaponPickup(plat.x + 25 + Math.random() * (plat.w - 50), plat.y, type));
+}
+
+function spawnArmor() {
+    if (armors.length >= MAX_ARMOR_ON_FIELD || platforms.length === 0) return;
+    const plat = platforms[Math.floor(Math.random() * platforms.length)];
+    const types = ["light", "light", "light", "light", "light", "medium", "medium", "medium", "heavy"];
+    armors.push(new ArmorPickup(plat.x + 25 + Math.random() * (plat.w - 50), plat.y, types[Math.floor(Math.random() * types.length)]));
+}
+
+function spawnFireball() {
+    fireballs.push(new Fireball(Math.random() * (WIDTH - 100) + 50, cameraY - 50));
+    sounds.fireball();
+}
+
+function resetFighters() {
+    platforms = [{x:150,y:450,w:120,h:18}, {x:730,y:450,w:120,h:18}, {x:280,y:400,w:140,h:20}, {x:580,y:400,w:140,h:20}, {x:430,y:360,w:140,h:20}, {x:200,y:320,w:130,h:18}, {x:670,y:320,w:130,h:18}, {x:440,y:280,w:120,h:18}, {x:320,y:220,w:110,h:16}, {x:570,y:220,w:110,h:16}, {x:450,y:180,w:100,h:16}];
+    platformSpawnAnims = []; currentLavaY = GROUND_Y; lavaRiseTimer = LAVA_RISE_INTERVAL; lavaRiseWarning = 0;
+    cameraY = 0; targetCameraY = 0;
+    p1 = new Fighter(210, RED, DARK_RED, 1, { left: 'KeyA', right: 'KeyD', jump: 'KeyW', punch: 'KeyF', kick: 'KeyG', super: 'Space' }, "Player 1");
+    p2 = new Fighter(790, BLUE, DARK_BLUE, -1, { left: 'ArrowLeft', right: 'ArrowRight', jump: 'ArrowUp', punch: 'KeyK', kick: 'KeyL', super: 'Enter' }, "Player 2");
+    p1.y = 450; p2.y = 450; p1.wins = p1Wins; p2.wins = p2Wins;
+    if (WEAPON_CHOICES[p1Idx]) { const info = WEAPON_TYPES[WEAPON_CHOICES[p1Idx]]; p1.weapon = { type: WEAPON_CHOICES[p1Idx], durability: info.durability, current_mag: info.mag_size || 0 }; }
+    if (WEAPON_CHOICES[p2Idx]) { const info = WEAPON_TYPES[WEAPON_CHOICES[p2Idx]]; p2.weapon = { type: WEAPON_CHOICES[p2Idx], durability: info.durability, current_mag: info.mag_size || 0 }; }
+    weapons = []; armors = []; arrows = []; bombs = []; explosions = []; debris = [];
+    superBlasts = []; superExplosions = []; fireballs = []; fireExplosions = []; nukeExplosions = []; radiationClouds = [];
+    spawnWeapon(); spawnArmor();
+}
+
+function handleMenuInput(code) {
+    if (state === "select") {
+        if (!p1Ready) {
+            if (code === 'KeyA') p1Idx = (p1Idx - 1 + WEAPON_CHOICES.length) % WEAPON_CHOICES.length;
+            else if (code === 'KeyD') p1Idx = (p1Idx + 1) % WEAPON_CHOICES.length;
+            else if (code === 'KeyF') p1Ready = true;
+        }
+        if (!p2Ready) {
+            if (code === 'ArrowLeft') p2Idx = (p2Idx - 1 + WEAPON_CHOICES.length) % WEAPON_CHOICES.length;
+            else if (code === 'ArrowRight') p2Idx = (p2Idx + 1) % WEAPON_CHOICES.length;
+            else if (code === 'KeyK') p2Ready = true;
+        }
+    } else if (state === "world_select" && !worldLocked) {
+        if (code === 'KeyA' || code === 'ArrowLeft') stageIdx = (stageIdx - 1 + STAGES.length) % STAGES.length;
+        else if (code === 'KeyD' || code === 'ArrowRight') stageIdx = (stageIdx + 1) % STAGES.length;
+        else if (code === 'KeyF' || code === 'KeyK') worldLocked = true;
+    } else if (state === "over" && code === 'KeyR') {
+        state = "select"; p1Idx = 0; p2Idx = 0; p1Ready = false; p2Ready = false;
+    }
+}
+
+function drawBackground(ctx, stage) {
+    const grad = ctx.createLinearGradient(0, 0, 0, HEIGHT);
+    grad.addColorStop(0, stage.sky_top); grad.addColorStop(1, stage.sky_bottom);
+    ctx.fillStyle = grad; ctx.fillRect(0, 0, WIDTH, HEIGHT);
+    
+    if (stage.decor === "volcano") {
+        ctx.fillStyle = rgb(70, 40, 35); ctx.beginPath(); ctx.moveTo(700, worldToScreen(GROUND_Y)); ctx.lineTo(820, worldToScreen(120)); ctx.lineTo(940, worldToScreen(GROUND_Y)); ctx.fill();
+        ctx.fillStyle = rgb(230, 90, 30); ctx.beginPath(); ctx.moveTo(790, worldToScreen(200)); ctx.lineTo(820, worldToScreen(130)); ctx.lineTo(850, worldToScreen(200)); ctx.fill();
+    }
+    
+    // Lava pit
+    const screenLavaY = worldToScreen(currentLavaY);
+    ctx.fillStyle = rgb(40, 10, 8); ctx.fillRect(0, screenLavaY, WIDTH, HEIGHT - screenLavaY);
+    ctx.fillStyle = rgb(240, 110, 30);
+    for (let gx = 0; gx < WIDTH; gx += 26) {
+        const wobble = Math.sin((gx + 40) * 0.15) * 4;
+        ctx.beginPath(); ctx.arc(gx + 13, screenLavaY + 55 + wobble, 9, 0, Math.PI * 2); ctx.fill();
+    }
+    
+    // Platforms
+    for (const plat of platforms) {
+        const sy = worldToScreen(plat.y);
+        if (sy < -50 || sy > HEIGHT + 50) continue;
+        const anim = platformSpawnAnims.find(a => a.plat === plat);
+        if (anim) {
+            const progress = 1.0 - (anim.frames / 25.0);
+            ctx.fillStyle = rgba(255, 255, 150, 0.7 * progress);
+            ctx.fillRect(plat.x - 12 + (1-progress)*12, sy - 12 + (1-progress)*12, plat.w + 24, plat.h + 24);
+        }
+        ctx.fillStyle = stage.ground; ctx.fillRect(plat.x, sy, plat.w, plat.h);
+        ctx.fillStyle = stage.ground_edge; ctx.fillRect(plat.x, sy, plat.w, 10);
+    }
+}
+
+function drawHUD(ctx) {
+    // Health bars
+    const drawBar = (x, y, health, name, alignLeft) => {
+        const w = 320, h = 26, ratio = health / MAX_HEALTH;
+        ctx.fillStyle = BLACK; ctx.fillRect(x, y, w, h);
+        ctx.fillStyle = ratio > 0.5 ? GREEN : (ratio > 0.25 ? YELLOW : RED);
+        const fillW = (w - 8) * ratio;
+        ctx.fillRect(alignLeft ? x + 4 : x + w - 4 - fillW, y + 4, fillW, h - 8);
+        ctx.fillStyle = WHITE; ctx.font = "bold 16px Arial"; ctx.textAlign = alignLeft ? "left" : "right";
+        ctx.fillText(name, alignLeft ? x : x + w, y - 8);
+    };
+    drawBar(30, 30, p1.health, p1.name, true);
+    drawBar(WIDTH - 30 - 320, 30, p2.health, p2.name, false);
+    
+    // Super bars
+    const drawSuper = (x, y, fighter, alignLeft) => {
+        const w = 320, h = 12, ratio = fighter.super_charge / MAX_SUPER_CHARGE;
+        ctx.fillStyle = BLACK; ctx.fillRect(x, y, w, h);
+        if (ratio > 0) {
+            ctx.fillStyle = ratio >= 1.0 ? PURPLE : rgb(40, 20, 60);
+            const fillW = (w - 4) * ratio;
+            ctx.fillRect(alignLeft ? x + 2 : x + w - 2 - fillW, y + 2, fillW, h - 4);
+        }
+        ctx.fillStyle = ratio >= 1.0 ? PURPLE : GRAY; ctx.font = "bold 12px Arial"; ctx.textAlign = alignLeft ? "left" : "right";
+        ctx.fillText("SUPER", alignLeft ? x : x + w, y - 6);
+    };
+    drawSuper(30, 62, p1, true);
+    drawSuper(WIDTH - 30 - 320, 62, p2, false);
+    
+    // Score
+    ctx.fillStyle = WHITE; ctx.font = "bold 24px Arial"; ctx.textAlign = "center";
+    ctx.fillText(`${p1.wins} - ${p2.wins}`, WIDTH / 2, 30);
+    
+    if (lavaRiseWarning > 0 && Math.floor(lavaRiseWarning / 5) % 2 === 0) {
+        ctx.fillStyle = RED; ctx.font = "bold 24px Arial"; ctx.textAlign = "center";
+        ctx.fillText("WARNING: LAVA RISING!", WIDTH / 2, HEIGHT / 2 - 50);
+    }
+    
+    if (radiationClouds.length > 0 && !gameOver) {
+        ctx.fillStyle = TOXIC_GREEN; ctx.font = "bold 14px Arial"; ctx.textAlign = "center";
+        ctx.fillText("☢ TOXIC FALLOUT ACTIVE ☢", WIDTH / 2, 90);
+    }
+}
+
+function update() {
+    if (state === "select") {
+        if (p1Ready && p2Ready) {
+            selectConfirmTimer++;
+            if (selectConfirmTimer > 45) { selectConfirmTimer = 0; worldLocked = false; worldConfirmTimer = 0; state = "world_select"; }
+        }
+        return;
+    }
+    if (state === "world_select") {
+        if (worldLocked) {
+            worldConfirmTimer++;
+            if (worldConfirmTimer > 45) {
+                resetFighters(); gameOver = false; winner = null;
+                spawnTimer = WEAPON_SPAWN_INTERVAL; armorSpawnTimer = ARMOR_SPAWN_INTERVAL;
+                fireballSpawnTimer = Math.random() * (FIREBALL_SPAWN_MAX - FIREBALL_SPAWN_MIN) + FIREBALL_SPAWN_MIN;
+                worldConfirmTimer = 0; state = "playing";
+            }
+        }
+        return;
+    }
+    
+    if (!gameOver) {
+        p1.handleInput(p2, weapons, armors, arrows, bombs, superBlasts);
+        p2.handleInput(p1, weapons, armors, arrows, bombs, superBlasts);
+        p1.physics(); p2.physics();
+        checkHits(); updateArrows(); updateSuperBlasts();
+        
+        for (let i = bombs.length - 1; i >= 0; i--) {
+            bombs[i].update();
+            if (bombs[i].exploded) {
+                const result = bombs[i].explode();
+                if (bombs[i].isNuke) { nukeExplosions.push(result[0]); radiationClouds.push(result[1]); }
+                else explosions.push(result);
+                bombs.splice(i, 1);
+            }
+        }
+        
+        for (let i = explosions.length - 1; i >= 0; i--) { explosions[i].update(); if (explosions[i].life <= 0) explosions.splice(i, 1); }
+        for (let i = nukeExplosions.length - 1; i >= 0; i--) { nukeExplosions[i].update(); if (nukeExplosions[i].life <= 0) nukeExplosions.splice(i, 1); }
+        for (let i = radiationClouds.length - 1; i >= 0; i--) { radiationClouds[i].update(); if (radiationClouds[i].life <= 0) radiationClouds.splice(i, 1); }
+        for (let i = superExplosions.length - 1; i >= 0; i--) { superExplosions[i].update(); if (superExplosions[i].life <= 0) superExplosions.splice(i, 1); }
+        
+        const stage = STAGES[stageIdx];
+        if (stage.decor === "volcano") {
+            fireballSpawnTimer--;
+            if (fireballSpawnTimer <= 0) {
+                spawnFireball(); fireballSpawnTimer = Math.random() * (FIREBALL_SPAWN_MAX - FIREBALL_SPAWN_MIN) + FIREBALL_SPAWN_MIN;
+                if (Math.random() < 0.3) spawnFireball();
+            }
+            for (let i = fireballs.length - 1; i >= 0; i--) {
+                fireballs[i].update();
+                if (fireballs[i].exploded) { fireExplosions.push(fireballs[i].explode()); fireballs.splice(i, 1); }
+                else if (fireballs[i].dead) fireballs.splice(i, 1);
+            }
+            for (let i = fireExplosions.length - 1; i >= 0; i--) { fireExplosions[i].update(); if (fireExplosions[i].life <= 0) fireExplosions.splice(i, 1); }
+        }
+        
+        for (let i = debris.length - 1; i >= 0; i--) { debris[i].update(); if (debris[i].life <= 0) debris.splice(i, 1); }
+        for (let i = platformSpawnAnims.length - 1; i >= 0; i--) { platformSpawnAnims[i].frames--; if (platformSpawnAnims[i].frames <= 0) platformSpawnAnims.splice(i, 1); }
+        
+        spawnTimer--; if (spawnTimer <= 0) { spawnWeapon(); spawnTimer = WEAPON_SPAWN_INTERVAL; }
+        armorSpawnTimer--; if (armorSpawnTimer <= 0) { spawnArmor(); armorSpawnTimer = ARMOR_SPAWN_INTERVAL; }
+        
+        lavaRiseTimer--;
+        if (lavaRiseTimer <= 120) lavaRiseWarning = 120;
+        if (lavaRiseTimer <= 0) {
+            currentLavaY -= LAVA_RISE_AMOUNT;
+            if (currentLavaY < MIN_PLATFORM_Y - 50) currentLavaY = MIN_PLATFORM_Y - 50;
+            lavaRiseTimer = LAVA_RISE_INTERVAL; sounds.hazard(); generateNewPlatforms();
+        }
+        if (lavaRiseWarning > 0) lavaRiseWarning--;
+        
+        updateCamera(); updateScreenShake();
+        
+        if (rectIntersect(p1.getRect(), p2.getRect())) {
+            if (p1.x < p2.x) { p1.x -= 2; p2.x += 2; } else { p1.x += 2; p2.x -= 2; }
+        }
+        
+        if (p1.health <= 0 || p2.health <= 0) {
+            gameOver = true; state = "over";
+            if (p1.health <= 0 && p2.health <= 0) winner = "Draw";
+            else if (p1.health <= 0) { winner = p2.name; p2.wins++; }
+            else { winner = p1.name; p1.wins++; }
+            p1Wins = p1.wins; p2Wins = p2.wins;
+        }
+    }
+}
+
+function draw() {
+    ctx.clearRect(0, 0, WIDTH, HEIGHT);
+    
+    if (state === "select") {
+        ctx.fillStyle = rgb(20, 20, 20); ctx.fillRect(0, 0, WIDTH, HEIGHT);
+        ctx.fillStyle = WHITE; ctx.font = "bold 32px Arial"; ctx.textAlign = "center";
+        ctx.fillText("CHOOSE YOUR WEAPON", WIDTH / 2, 80);
+        
+        const colW = Math.min(100, (WIDTH - 60) / WEAPON_CHOICES.length);
+        const startX = WIDTH / 2 - (WEAPON_CHOICES.length * colW) / 2 + colW / 2;
+        for (let i = 0; i < WEAPON_CHOICES.length; i++) {
+            const cx = startX + i * colW;
+            ctx.fillStyle = i === p1Idx ? rgba(220, 60, 60, 0.3) : (i === p2Idx ? rgba(60, 100, 220, 0.3) : rgba(255,255,255,0.1));
+            ctx.fillRect(cx - 40, 150, 80, 80);
+            ctx.fillStyle = WHITE; ctx.font = "14px Arial";
+            ctx.fillText(WEAPON_CHOICES[i] ? WEAPON_CHOICES[i].charAt(0).toUpperCase() + WEAPON_CHOICES[i].slice(1) : "Fists", cx, 200);
+            if (i === p1Idx) { ctx.fillStyle = RED; ctx.fillText("P1", cx, 140); }
+            if (i === p2Idx) { ctx.fillStyle = BLUE; ctx.fillText("P2", cx, 140); }
+        }
+        ctx.fillStyle = p1Ready ? GREEN : RED; ctx.fillText(`Player 1: ${p1Ready ? "READY!" : "A/D choose, F to lock"}`, WIDTH / 2, 300);
+        ctx.fillStyle = p2Ready ? GREEN : BLUE; ctx.fillText(`Player 2: ${p2Ready ? "READY!" : "Arrows choose, K to lock"}`, WIDTH / 2, 340);
+        return;
+    }
+    
+    if (state === "world_select") {
+        drawBackground(ctx, STAGES[stageIdx]);
+        ctx.fillStyle = rgba(0, 0, 0, 0.7); ctx.fillRect(0, 0, WIDTH, HEIGHT);
+        ctx.fillStyle = WHITE; ctx.font = "bold 32px Arial"; ctx.textAlign = "center";
+        ctx.fillText("CHOOSE YOUR WORLD", WIDTH / 2, 80);
+        ctx.fillStyle = YELLOW; ctx.font = "bold 24px Arial"; ctx.fillText(STAGES[stageIdx].name, WIDTH / 2, 140);
+        ctx.fillStyle = WHITE; ctx.fillText("<", WIDTH / 2 - 100, 140); ctx.fillText(">", WIDTH / 2 + 100, 140);
+        ctx.fillStyle = worldLocked ? GREEN : WHITE; ctx.font = "20px Arial";
+        ctx.fillText(worldLocked ? "READY!" : "A/D or Arrows to browse, F or K to lock in", WIDTH / 2, 300);
+        return;
+    }
+    
+    ctx.save();
+    ctx.translate(screenShakeX, screenShakeY);
+    
+    drawBackground(ctx, STAGES[stageIdx]);
+    for (const wp of weapons) wp.draw(ctx);
+    for (const ap of armors) ap.draw(ctx);
+    p1.draw(ctx); p2.draw(ctx);
+    for (const a of arrows) a.draw(ctx);
+    for (const b of bombs) b.draw(ctx);
+    for (const e of explosions) e.draw(ctx);
+    for (const e of nukeExplosions) e.draw(ctx);
+    for (const r of radiationClouds) r.draw(ctx);
+    for (const s of superBlasts) s.draw(ctx);
+    for (const s of superExplosions) s.draw(ctx);
+    for (const f of fireballs) f.draw(ctx);
+    for (const f of fireExplosions) f.draw(ctx);
+    for (const d of debris) d.draw(ctx);
+    
+    ctx.restore();
+    drawHUD(ctx);
+    
+    if (gameOver) {
+        ctx.fillStyle = rgba(0, 0, 0, 0.7); ctx.fillRect(0, 0, WIDTH, HEIGHT);
+        ctx.fillStyle = YELLOW; ctx.font = "bold 48px Arial"; ctx.textAlign = "center";
+        ctx.fillText(winner === "Draw" ? "DRAW!" : `${winner} WINS!`, WIDTH / 2, HEIGHT / 2 - 40);
+        ctx.fillStyle = WHITE; ctx.font = "24px Arial";
+        ctx.fillText("Press R to Rematch | ESC to Quit", WIDTH / 2, HEIGHT / 2 + 20);
+    } else {
+        ctx.fillStyle = rgba(40, 40, 40, 0.8); ctx.font = "14px Arial"; ctx.textAlign = "center";
+        ctx.fillText("P1: A/D W F G SPACE(super) | P2: Arrows K L ENTER(super) | Nukes leave TOXIC fallout!", WIDTH / 2, HEIGHT - 15);
+    }
+}
+
+function gameLoop() {
+    update();
+    draw();
+    requestAnimationFrame(gameLoop);
+}
+
+resetFighters();
+requestAnimationFrame(gameLoop);
+</script>
 </body>
 </html>
