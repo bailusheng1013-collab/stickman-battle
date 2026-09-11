@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>2D Arena Shooter</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #111;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            font-family: Arial, sans-serif;
+            color: white;
+            overflow: hidden;
+        }
+        canvas {
+            background-color: #222;
+            border: 2px solid #444;
+            cursor: crosshair;
+        }
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 24px;
+            text-shadow: 2px 2px 4px #000;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="ui">Score: <span id="score">0</span></div>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreElement = document.getElementById('score');
+
+        // --- GAME STATE ---
+        let score = 0;
+        let gameOver = false;
+        let spawnTimer = 0;
+        let shootCooldown = 0;
+
+        // --- INPUT HANDLING ---
+        const keys = {};
+        const mouse = { x: 0, y: 0, down: false };
+
+        window.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
+        window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+
+        canvas.addEventListener('mousemove', e => {
+            const rect = canvas.getBoundingClientRect();
+            mouse.x = e.clientX - rect.left;
+            mouse.y = e.clientY - rect.top;
+        });
+
+        canvas.addEventListener('mousedown', () => {
+            if (gameOver) restartGame();
+            else mouse.down = true;
+        });
+        canvas.addEventListener('mouseup', () => mouse.down = false);
+
+        // --- ENTITIES ---
+        const player = {
+            x: canvas.width / 2,
+            y: canvas.height / 2,
+            radius: 15,
+            speed: 4,
+            color: '#00ff00'
+        };
+
+        let bullets = [];
+        let enemies = [];
+        let particles = [];
+
+        // --- HELPER FUNCTIONS ---
+        function getAngle(x1, y1, x2, y2) {
+            return Math.atan2(y2 - y1, x2 - x1);
+        }
+
+        function distance(x1, y1, x2, y2) {
+            return Math.hypot(x2 - x1, y2 - y1);
+        }
+
+        function spawnEnemy() {
+            let x, y;
+            // Spawn on a random edge of the screen
+            const side = Math.floor(Math.random() * 4);
+            if (side === 0) { x = Math.random() * canvas.width; y = -20; }
+            else if (side === 1) { x = canvas.width + 20; y = Math.random() * canvas.height; }
+            else if (side === 2) { x = Math.random() * canvas.width; y = canvas.height + 20; }
+            else { x = -20; y = Math.random() * canvas.height; }
+
+            enemies.push({
+                x: x,
+                y: y,
+                radius: 12,
+                speed: 1.5 + Math.random() * 1.5,
+                color: '#ff3333'
+            });
+        }
+
+        function createExplosion(x, y, color) {
+            for (let i = 0; i < 15; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    radius: Math.random() * 3 + 1,
+                    color: color,
+                    dx: (Math.random() - 0.5) * 5,
+                    dy: (Math.random() - 0.5) * 5,
+                    life: 30
+                });
+            }
+        }
+
+        function restartGame() {
+            player.x = canvas.width / 2;
+            player.y = canvas.height / 2;
+            bullets = [];
+            enemies = [];
+            particles = [];
+            score = 0;
+            scoreElement.innerText = score;
+            gameOver = false;
+        }
+
+        // --- UPDATE LOOP ---
+        function update() {
+            if (gameOver) return;
+
+            // 1. Player Movement
+            if (keys['w'] && player.y - player.radius > 0) player.y -= player.speed;
+            if (keys['s'] && player.y + player.radius < canvas.height) player.y += player.speed;
+            if (keys['a'] && player.x - player.radius > 0) player.x -= player.speed;
+            if (keys['d'] && player.x + player.radius < canvas.width) player.x += player.speed;
+
+            // 2. Shooting
+            if (shootCooldown > 0) shootCooldown--;
+            if (mouse.down && shootCooldown <= 0) {
+                const angle = getAngle(player.x, player.y, mouse.x, mouse.y);
+                bullets.push({
+                    x: player.x,
+                    y: player.y,
+                    radius: 4,
+                    speed: 8,
+                    dx: Math.cos(angle) * 8,
+                    dy: Math.sin(angle) * 8,
+                    color: '#ffff00'
+                });
+                shootCooldown = 10; // Fire rate limit
+            }
+
+            // 3. Update Bullets
+            for (let i = bullets.length - 1; i >= 0; i--) {
+                let b = bullets[i];
+                b.x += b.dx;
+                b.y += b.dy;
+                // Remove if off-screen
+                if (b.x < 0 || b.x > canvas.width || b.y < 0 || b.y > canvas.height) {
+                    bullets.splice(i, 1);
+                }
+            }
+
+            // 4. Spawn & Update Enemies
+            spawnTimer++;
+            if (spawnTimer > 60) { // Spawn an enemy roughly every second
+                spawnEnemy();
+                spawnTimer = 0;
+            }
+
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                let e = enemies[i];
+                const angle = getAngle(e.x, e.y, player.x, player.y);
+                e.x += Math.cos(angle) * e.speed;
+                e.y += Math.sin(angle) * e.speed;
+
+                // Check collision with Player
+                if (distance(e.x, e.y, player.x, player.y) < e.radius + player.radius) {
+                    createExplosion(player.x, player.y, '#00ff00');
+                    gameOver = true;
+                }
+            }
+
+            // 5. Bullet vs Enemy Collision
+            for (let i = bullets.length - 1; i >= 0; i--) {
+                for (let j = enemies.length - 1; j >= 0; j--) {
+                    if (distance(bullets[i].x, bullets[i].y, enemies[j].x, enemies[j].y) < bullets[i].radius + enemies[j].radius) {
+                        createExplosion(enemies[j].x, enemies[j].y, '#ff3333');
+                        bullets.splice(i, 1);
+                        enemies.splice(j, 1);
+                        score += 10;
+                        scoreElement.innerText = score;
+                        break; // Bullet is gone, stop checking it
+                    }
+                }
+            }
+
+            // 6. Update Particles
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                p.x += p.dx;
+                p.y += p.dy;
+                p.life--;
+                if (p.life <= 0) particles.splice(i, 1);
+            }
+        }
+
+        // --- DRAW LOOP ---
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw Particles
+            particles.forEach(p => {
+                ctx.globalAlpha = p.life / 30;
+                ctx.fillStyle = p.color;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+                ctx.fill();
+            });
+            ctx.globalAlpha = 1;
+
+            // Draw Bullets
+            bullets.forEach(b => {
+                ctx.fillStyle = b.color;
+                ctx.beginPath();
+                ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
+                ctx.fill();
+            });
+
+            // Draw Enemies
+            enemies.forEach(e => {
+                ctx.fillStyle = e.color;
+                ctx.beginPath();
+                ctx.arc(e.x, e.y, e.radius, 0, Math.PI * 2);
+                ctx.fill();
+                // Enemy "eye" to make them look menacing
+                ctx.fillStyle = '#000';
+                ctx.beginPath();
+                ctx.arc(e.x, e.y, e.radius / 2, 0, Math.PI * 2);
+                ctx.fill();
+            });
+
+            // Draw Player
+            const angle = getAngle(player.x, player.y, mouse.x, mouse.y);
+            
+            // Player Body
+            ctx.fillStyle = player.color;
+            ctx.beginPath();
+            ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Player Gun Barrel
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.moveTo(player.x, player.y);
+            ctx.lineTo(player.x + Math.cos(angle) * 25, player.y + Math.sin(angle) * 25);
+            ctx.stroke();
+
+            // Game Over Screen
+            if (gameOver) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = '#fff';
+                ctx.font = '48px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('GAME OVER', canvas.width / 2, canvas.height / 2 - 20);
+                
+                ctx.font = '24px Arial';
+                ctx.fillText('Final Score: ' + score, canvas.width / 2, canvas.height / 2 + 20);
+                ctx.fillText('Click to Restart', canvas.width / 2, canvas.height / 2 + 60);
+            }
+        }
+
+        // --- MAIN GAME LOOP ---
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        gameLoop();
+    </script>
+</body>
+</html>
