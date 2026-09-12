@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Stickman Battle - Character Creator!</title>
+<title>Stickman Battle - Dead Bodies!</title>
 <style>
     body { margin: 0; overflow: hidden; background: #1a1a1a; font-family: Arial, sans-serif; color: white; }
     canvas { display: block; background: #000; }
@@ -57,9 +57,6 @@ const YELLOW = rgb(240, 200, 40);
 const GRAY = rgb(120, 120, 120), BROWN = rgb(120, 80, 40), SILVER = rgb(200, 205, 210);
 const TOXIC_GREEN = rgb(120, 220, 80);
 const COMBO_ORANGE = rgb(255, 140, 40);
-const ORANGE = rgb(255, 140, 40);
-const CYAN = rgb(80, 200, 230);
-const PINK = rgb(255, 120, 180);
 
 const BASE_GRAVITY = 0.8, BASE_JUMP_STRENGTH = -15, BASE_MOVE_SPEED = 5, BASE_MAX_HEALTH = 100;
 const BASE_PUNCH_DAMAGE = 8, BASE_KICK_DAMAGE = 14;
@@ -227,6 +224,8 @@ const sounds = {
         if (size === 'large') playTone(40, 0.8, 'sawtooth', 0.3);
     },
     slime_bounce: () => { playTone(320, 0.09, 'sine', 0.15); setTimeout(() => playTone(520, 0.08, 'sine', 0.12), 40); },
+    death: () => { playNoise(0.3, 0.25); playTone(200, 0.2, 'sawtooth', 0.15); setTimeout(() => playTone(80, 0.4, 'sine', 0.2), 100); },
+    death_land: () => { playNoise(0.15, 0.2); playTone(60, 0.15, 'sine', 0.15); },
     menu_select: () => playTone(600, 0.08, 'sine', 0.1),
     menu_confirm: () => { playTone(800, 0.1, 'sine', 0.12); setTimeout(() => playTone(1000, 0.1, 'sine', 0.12), 80); }
 };
@@ -252,9 +251,8 @@ let fighters = [];
 let comboTexts = [];
 let asteroids = [], asteroidImpacts = [], asteroidWarnings = [], asteroidSpawnTimer = 60;
 
-// --- NEW: R PRESS DOUBLE-CLICK TRACKING ---
 let lastRPressTime = 0;
-const R_DOUBLE_PRESS_WINDOW = 1000; // 1 second window for double press
+const R_DOUBLE_PRESS_WINDOW = 1000;
 
 let ccSection = 0;
 let ccStatIdx = 0;
@@ -574,6 +572,16 @@ class Fighter {
         this.aerial_combo_hits_landed = 0; this.aerial_combo_hit_flags = [false, false, false];
         this.combo_trail = []; this.firing_ray = false;
         this.bounceCd = 0; this.bounceSquish = 0;
+        // --- DEATH STATE ---
+        this.isDead = false;
+        this.deathTimer = 0;
+        this.deathMaxTimer = 300; // 5 seconds at 60fps
+        this.deathVelX = 0;
+        this.deathVelY = 0;
+        this.deathRotation = 0;
+        this.deathRotSpeed = 0;
+        this.deathLanded = false;
+        this.deathPose = null;
     }
     getRect() { return { x: this.x - this.width/2, y: this.y - this.height, w: this.width, h: this.height }; }
     getAerialComboHitbox() {
@@ -608,8 +616,279 @@ class Fighter {
     throwBomb(b) { const i=WEAPON_TYPES[this.weapon.type]; const sx=this.x+this.facing*20,sy=this.y-this.height*0.7; if(i.proj_kind==="nuke") b.push(new Nuke(sx,sy,this.facing,i.damage,this)); else b.push(new Bomb(sx,sy,this.facing,i.damage,this)); this.weapon.durability--; if(this.weapon.durability<=0){this.weapon=null;sounds.break();} }
     fireSuperRay() { if(!this.isSuperReady()) return false; superRays.push(new SuperRay(this)); this.super_charge=0; this.super_cooldown=SUPER_RAY_COOLDOWN; this.super_flash=25; this.firing_ray=true; this.attack_type="super_ray"; this.attack_anim=SUPER_RAY_DURATION; sounds.super_fire(); return true; }
     startAerialCombo() { if(this.on_ground||this.aerial_combo_cd>0||this.aerial_combo_timer>0||this.hit_stun>0) return false; this.aerial_combo_timer=AERIAL_COMBO_DURATION; this.aerial_combo_hits_landed=0; this.aerial_combo_hit_flags=[false,false,false]; this.aerial_combo_cd=AERIAL_COMBO_COOLDOWN; this.attack_type="aerial_combo"; this.attack_anim=AERIAL_COMBO_DURATION; this.combo_trail=[]; sounds.combo_start(); return true; }
+    
+    // --- DEATH METHOD ---
+    die(fl) {
+        if (this.isDead) return;
+        this.isDead = true;
+        this.health = 0;
+        this.deathTimer = this.deathMaxTimer;
+        const dir = fl ? 1 : -1;
+        this.deathVelX = dir * (3 + Math.random() * 5);
+        this.deathVelY = -7 - Math.random() * 5;
+        this.deathRotSpeed = dir * (0.06 + Math.random() * 0.12);
+        this.weapon = null;
+        this.armor = null;
+        this.firing_ray = false;
+        this.aerial_combo_timer = 0;
+        this.combo_trail = [];
+        
+        // Spawn death particles
+        for (let i = 0; i < 8; i++) {
+            debris.push(new Debris(
+                this.x + (Math.random() - 0.5) * 20,
+                this.y - this.height * 0.5 + (Math.random() - 0.5) * 30,
+                this.color
+            ));
+        }
+        sounds.death();
+        triggerScreenShake(8, 12);
+    }
+    
+    // --- DEATH PHYSICS ---
+    updateDeath() {
+        if (!this.isDead) return;
+        if (this.deathTimer <= 0) return;
+        
+        this.deathTimer--;
+        
+        if (!this.deathLanded) {
+            this.deathVelY += BASE_GRAVITY;
+            this.x += this.deathVelX;
+            this.y += this.deathVelY;
+            this.deathRotation += this.deathRotSpeed;
+            this.deathVelX *= 0.995;
+            
+            // Check platform collision
+            for (const p of platforms) {
+                const prevY = this.y - this.deathVelY;
+                if (prevY <= p.y && this.y >= p.y && this.x >= p.x - 10 && this.x <= p.x + p.w + 10 && this.deathVelY >= 0) {
+                    this.y = p.y;
+                    this.deathVelY = 0;
+                    this.deathVelX = 0;
+                    this.deathRotSpeed = 0;
+                    // Snap to lying down angle
+                    if (this.deathRotation >= 0) {
+                        this.deathRotation = Math.PI / 2 + (Math.random() - 0.5) * 0.4;
+                    } else {
+                        this.deathRotation = -Math.PI / 2 + (Math.random() - 0.5) * 0.4;
+                    }
+                    this.deathLanded = true;
+                    // Generate random death pose
+                    this.deathPose = {
+                        a1x: -8 + Math.random() * 6, a1y: -22 + Math.random() * 8,
+                        a2x: 10 + Math.random() * 8, a2y: -20 + Math.random() * 8,
+                        l1x: -45 + Math.random() * 10, l1y: -14 + Math.random() * 8,
+                        l2x: -52 + Math.random() * 10, l2y: 4 + Math.random() * 10
+                    };
+                    sounds.death_land();
+                    // Small landing debris
+                    for (let i = 0; i < 4; i++) {
+                        debris.push(new Debris(this.x + (Math.random() - 0.5) * 30, this.y, rgb(110, 90, 70)));
+                    }
+                    break;
+                }
+            }
+            
+            // Check lava/hazard
+            if (!this.deathLanded && this.y >= currentLavaY) {
+                this.y = currentLavaY;
+                this.deathVelY = 0;
+                this.deathVelX = 0;
+                this.deathRotSpeed = 0;
+                if (this.deathRotation >= 0) {
+                    this.deathRotation = Math.PI / 2 + (Math.random() - 0.5) * 0.3;
+                } else {
+                    this.deathRotation = -Math.PI / 2 + (Math.random() - 0.5) * 0.3;
+                }
+                this.deathLanded = true;
+                this.deathPose = {
+                    a1x: -8 + Math.random() * 6, a1y: -22 + Math.random() * 8,
+                    a2x: 10 + Math.random() * 8, a2y: -20 + Math.random() * 8,
+                    l1x: -45 + Math.random() * 10, l1y: -14 + Math.random() * 8,
+                    l2x: -52 + Math.random() * 10, l2y: 4 + Math.random() * 10
+                };
+                sounds.death_land();
+            }
+            
+            // Clamp to screen sides
+            if (this.x < 10) { this.x = 10; this.deathVelX = Math.abs(this.deathVelX) * 0.3; }
+            if (this.x > WIDTH - 10) { this.x = WIDTH - 10; this.deathVelX = -Math.abs(this.deathVelX) * 0.3; }
+        }
+    }
+    
+    // --- DEAD BODY DRAWING ---
+    drawDead(ctx) {
+        if (this.deathTimer <= 0) return;
+        
+        const alpha = Math.min(1, this.deathTimer / 60);
+        const sy = worldToScreen(this.y);
+        if (sy < -200 || sy > HEIGHT + 200) return;
+        const s = this.statMods.sizeScale;
+        
+        // Ghost rising effect (first 3 seconds)
+        if (this.deathTimer > 180) {
+            const ghostTime = this.deathMaxTimer - this.deathTimer;
+            const ghostProgress = ghostTime / 120;
+            const ghostAlpha = Math.max(0, (1 - ghostProgress) * 0.35);
+            const ghostRise = ghostProgress * 90;
+            const wobble = Math.sin(ghostTime * 0.08) * 8;
+            
+            ctx.save();
+            ctx.globalAlpha = ghostAlpha;
+            ctx.strokeStyle = rgb(200, 220, 255);
+            ctx.fillStyle = rgba(200, 220, 255, 0.2);
+            ctx.lineWidth = 2.5 * s;
+            
+            const gx = this.x + wobble;
+            const gy = sy - ghostRise;
+            
+            // Ghost head
+            ctx.beginPath();
+            ctx.arc(gx, gy - 60*s, 12*s, 0, Math.PI*2);
+            ctx.fill(); ctx.stroke();
+            
+            // Ghost body
+            ctx.beginPath();
+            ctx.moveTo(gx, gy - 48*s);
+            ctx.lineTo(gx, gy - 10*s);
+            ctx.stroke();
+            
+            // Ghost arms (wavy)
+            ctx.beginPath();
+            ctx.moveTo(gx - 14*s, gy - 35*s + Math.sin(ghostTime * 0.1) * 3);
+            ctx.lineTo(gx + 14*s, gy - 35*s - Math.sin(ghostTime * 0.1) * 3);
+            ctx.stroke();
+            
+            // Ghost legs
+            ctx.beginPath();
+            ctx.moveTo(gx, gy - 10*s);
+            ctx.lineTo(gx - 8*s, gy + 5*s);
+            ctx.moveTo(gx, gy - 10*s);
+            ctx.lineTo(gx + 8*s, gy + 5*s);
+            ctx.stroke();
+            
+            // Ghost face (O mouth, dot eyes)
+            ctx.fillStyle = rgb(150, 180, 220);
+            ctx.beginPath();
+            ctx.arc(gx - 4*s, gy - 62*s, 2*s, 0, Math.PI*2);
+            ctx.arc(gx + 4*s, gy - 62*s, 2*s, 0, Math.PI*2);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(gx, gy - 55*s, 3*s, 0, Math.PI*2);
+            ctx.stroke();
+            
+            ctx.restore();
+        }
+        
+        // Blood pool on ground
+        if (this.deathLanded) {
+            ctx.save();
+            ctx.globalAlpha = alpha * 0.4;
+            ctx.fillStyle = rgb(130, 15, 15);
+            ctx.beginPath();
+            ctx.ellipse(this.x, sy + 2, 24*s, 5*s, 0, 0, Math.PI*2);
+            ctx.fill();
+            // Smaller splats
+            ctx.fillStyle = rgb(160, 20, 20);
+            ctx.globalAlpha = alpha * 0.3;
+            for (let i = 0; i < 3; i++) {
+                const sx2 = this.x + Math.sin(i * 2.3) * 20 * s;
+                const sy2 = sy + Math.cos(i * 1.7) * 3;
+                ctx.beginPath();
+                ctx.ellipse(sx2, sy2, 5*s, 2*s, i * 0.5, 0, Math.PI*2);
+                ctx.fill();
+            }
+            ctx.restore();
+        }
+        
+        // Dead body
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.translate(this.x, sy);
+        ctx.rotate(this.deathRotation);
+        
+        const bodyColor = this.darkColor;
+        ctx.strokeStyle = bodyColor;
+        ctx.fillStyle = bodyColor;
+        
+        // Torso (body is horizontal when lying down)
+        ctx.lineWidth = 5*s;
+        ctx.beginPath();
+        ctx.moveTo(-28*s, 0);  // hip
+        ctx.lineTo(8*s, 0);    // shoulder
+        ctx.stroke();
+        
+        // Head
+        ctx.beginPath();
+        ctx.arc(22*s, 0, 13*s, 0, Math.PI*2);
+        ctx.fill();
+        ctx.strokeStyle = BLACK;
+        ctx.lineWidth = 1.5*s;
+        ctx.stroke();
+        
+        // X Eyes (red)
+        ctx.strokeStyle = rgb(200, 30, 30);
+        ctx.lineWidth = 2.5*s;
+        const ex = 26*s;
+        const ey1 = -4*s, ey2 = 4*s;
+        const xs = 3.5*s;
+        ctx.beginPath();
+        // Top eye X
+        ctx.moveTo(ex - xs, ey1 - xs); ctx.lineTo(ex + xs, ey1 + xs);
+        ctx.moveTo(ex + xs, ey1 - xs); ctx.lineTo(ex - xs, ey1 + xs);
+        // Bottom eye X
+        ctx.moveTo(ex - xs, ey2 - xs); ctx.lineTo(ex + xs, ey2 + xs);
+        ctx.moveTo(ex + xs, ey2 - xs); ctx.lineTo(ex - xs, ey2 + xs);
+        ctx.stroke();
+        
+        // Tongue sticking out
+        ctx.fillStyle = rgb(200, 60, 80);
+        ctx.beginPath();
+        ctx.ellipse(34*s, 2*s, 4*s, 2.5*s, 0.2, 0, Math.PI*2);
+        ctx.fill();
+        
+        // Arms (using death pose or defaults)
+        const p = this.deathPose || {a1x:-5,a1y:-18,a2x:12,a2y:-16,l1x:-48,l1y:-10,l2x:-52,l2y:6};
+        ctx.strokeStyle = bodyColor;
+        ctx.lineWidth = 4*s;
+        ctx.beginPath();
+        ctx.moveTo(3*s, 0);
+        ctx.lineTo(p.a1x*s, p.a1y*s);
+        ctx.moveTo(3*s, 0);
+        ctx.lineTo(p.a2x*s, p.a2y*s);
+        ctx.stroke();
+        
+        // Hands (small circles)
+        ctx.fillStyle = bodyColor;
+        ctx.beginPath();
+        ctx.arc(p.a1x*s, p.a1y*s, 3*s, 0, Math.PI*2);
+        ctx.arc(p.a2x*s, p.a2y*s, 3*s, 0, Math.PI*2);
+        ctx.fill();
+        
+        // Legs
+        ctx.strokeStyle = bodyColor;
+        ctx.lineWidth = 5*s;
+        ctx.beginPath();
+        ctx.moveTo(-28*s, 0);
+        ctx.lineTo(p.l1x*s, p.l1y*s);
+        ctx.moveTo(-28*s, 0);
+        ctx.lineTo(p.l2x*s, p.l2y*s);
+        ctx.stroke();
+        
+        // Feet
+        ctx.fillStyle = bodyColor;
+        ctx.beginPath();
+        ctx.arc(p.l1x*s, p.l1y*s, 3.5*s, 0, Math.PI*2);
+        ctx.arc(p.l2x*s, p.l2y*s, 3.5*s, 0, Math.PI*2);
+        ctx.fill();
+        
+        ctx.restore();
+    }
+    
     handleInput(wList, aList, aRows, bList, keySource) {
-        if (this.hit_stun > 0 || this.health <= 0) { if(this.hit_stun>0) this.hit_stun--; this.moving=false; return; }
+        if (this.isDead || this.health <= 0) return;
+        if (this.hit_stun > 0) { this.hit_stun--; this.moving = false; return; }
         const c = this.controls; this.moving = false;
         const speed = BASE_MOVE_SPEED * this.statMods.speed;
         if (this.aerial_combo_timer > 0) { if(keySource[c.left]){this.x-=speed*0.4;this.facing=-1;} if(keySource[c.right]){this.x+=speed*0.4;this.facing=1;} this.x=Math.max(this.width,Math.min(WIDTH-this.width,this.x)); this.tryPickupWeapon(wList); this.tryPickupArmor(aList); return; }
@@ -632,6 +911,7 @@ class Fighter {
         this.tryPickupWeapon(wList); this.tryPickupArmor(aList);
     }
     physics() {
+        if (this.isDead) { this.updateDeath(); return; }
         if (this.health <= 0) return;
         this.vel_y += BASE_GRAVITY; this.y += this.vel_y; this.on_ground = false;
         for (const p of platforms) {
@@ -683,12 +963,25 @@ class Fighter {
     takeHit(d, fl) {
         if(this.health<=0) return;
         if(this.armor){const i=ARMOR_TYPES[this.armor.type];const ab=Math.min(d,i.absorb);d-=ab;this.armor.durability--;this.armor_flash=10;if(this.armor.durability<=0){this.armor=null;sounds.break();}}
-        this.health=Math.max(0,this.health-d); this.hit_stun=HIT_STUN;
+        this.health=Math.max(0,this.health-d);
+        if (this.health <= 0) { this.die(fl); return; }
+        this.hit_stun=HIT_STUN;
         const push = (fl ? 8 : -8) * this.statMods.sizeScale;
         this.x=Math.max(this.width,Math.min(WIDTH-this.width,this.x+push));
     }
-    hazardHit() { if(this.health<=0) return; this.health=Math.max(0,this.health-HAZARD_DAMAGE); this.hit_stun=HAZARD_STUN; const sp=platforms.filter(p=>p.y<currentLavaY-20); if(sp.length>0){const b=sp.reduce((p,c)=>p.y<c.y?p:c);this.x=b.x+b.w/2;this.y=b.y;}else{this.x=WIDTH/2;this.y=Math.max(MIN_PLATFORM_Y+20,currentLavaY-50);} this.vel_y=BASE_JUMP_STRENGTH*0.5*this.statMods.jump;this.on_ground=false;sounds.hazard(); }
+    hazardHit() {
+        if(this.health<=0) return;
+        this.health=Math.max(0,this.health-HAZARD_DAMAGE);
+        if (this.health <= 0) { this.die(Math.random() > 0.5); return; }
+        this.hit_stun=HAZARD_STUN;
+        const sp=platforms.filter(p=>p.y<currentLavaY-20);
+        if(sp.length>0){const b=sp.reduce((p,c)=>p.y<c.y?p:c);this.x=b.x+b.w/2;this.y=b.y;}
+        else{this.x=WIDTH/2;this.y=Math.max(MIN_PLATFORM_Y+20,currentLavaY-50);}
+        this.vel_y=BASE_JUMP_STRENGTH*0.5*this.statMods.jump;this.on_ground=false;sounds.hazard();
+    }
     draw(ctx) {
+        // --- DEAD BODY ---
+        if (this.isDead) { this.drawDead(ctx); return; }
         if (this.health <= 0) return;
         const sy = worldToScreen(this.y);
         if (sy < -150 || sy > HEIGHT + 150) return;
@@ -780,7 +1073,7 @@ function resetFighters() {
     const cpuConfigs=[{color:BLUE,dark:DARK_BLUE,name:"CPU 2"},{color:GREEN,dark:DARK_GREEN,name:"CPU 3"},{color:PURPLE,dark:DARK_PURPLE,name:"CPU 4"}];
     const sp=[WIDTH*0.8,WIDTH*0.35,WIDTH*0.65];
     for(let i=0;i<nc;i++){const cfg=cpuConfigs[i];const ih=gameMode==="multi"&&i===0;const ct=ih?{left:'ArrowLeft',right:'ArrowRight',jump:'ArrowUp',punch:'KeyK',kick:'KeyL',super:'Enter',aerial:'KeyN'}:{left:'ArrowLeft',right:'ArrowRight',jump:'ArrowUp',punch:'KeyK',kick:'KeyL',super:'Enter',aerial:'KeyQ'};fighters.push(new Fighter(sp[i],cfg.color,cfg.dark,-1,ct,ih?"Player 2":cfg.name,!ih,i+1,{health:1,speed:1,damage:1,jump:1,sizeScale:1}));}
-    for(const f of fighters)f.y=HEIGHT-250;
+    for(const f of fighters)f.y=GROUND_Y-200;
     for(let i=0;i<fighters.length;i++)fighters[i].wins=wins[i];
     if(WEAPON_CHOICES[p1Idx]){const info=WEAPON_TYPES[WEAPON_CHOICES[p1Idx]];fighters[0].weapon={type:WEAPON_CHOICES[p1Idx],durability:info.durability,current_mag:info.mag_size||0};}
     weapons=[];armors=[];arrows=[];bombs=[];explosions=[];debris=[];superRays=[];fireballs=[];fireExplosions=[];nukeExplosions=[];radiationClouds=[];
@@ -788,7 +1081,6 @@ function resetFighters() {
     for(let i=0;i<Math.min(2,fighters.length);i++)spawnArmor();
 }
 
-// --- UPDATED: R PRESS DOUBLE-CLICK HANDLER ---
 function handleMenuInput(code) {
     if(state==="mode_select"){
         if(code==='ArrowUp'||code==='KeyW')modeIdx=(modeIdx-1+MODE_CHOICES.length)%MODE_CHOICES.length;
@@ -811,17 +1103,14 @@ function handleMenuInput(code) {
         else if(code==='KeyD'||code==='ArrowRight')stageIdx=(stageIdx+1)%STAGES.length;
         else if(code==='KeyF'||code==='KeyK'||code==='Enter'||code==='Space')worldLocked=true;
     }
-    // --- NEW: R PRESS DOUBLE-CLICK LOGIC ---
     else if(state==="over"&&code==='KeyR'){
         const now = Date.now();
         if (now - lastRPressTime < R_DOUBLE_PRESS_WINDOW) {
-            // Double press - go to mode select
             state = "mode_select";
             p1Idx = 0;
             p1Ready = false;
             sounds.menu_confirm();
         } else {
-            // Single press - go to character creator
             state = "char_create";
             sounds.menu_select();
         }
@@ -835,34 +1124,28 @@ function drawCharCreator(ctx) {
     grad.addColorStop(1, rgb(60, 30, 90));
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, WIDTH, HEIGHT);
-    
     ctx.fillStyle = rgba(255, 255, 255, 0.3);
     for (let i = 0; i < 50; i++) {
         const sx = (i * 137) % WIDTH;
         const sy = (i * 89) % HEIGHT;
         ctx.beginPath(); ctx.arc(sx, sy, 1 + (i % 3) * 0.5, 0, Math.PI * 2); ctx.fill();
     }
-    
     ctx.fillStyle = YELLOW;
     ctx.font = `bold ${Math.min(48, WIDTH * 0.04)}px Arial`;
     ctx.textAlign = "center";
     ctx.fillText("CREATE YOUR FIGHTER", WIDTH / 2, 60);
-    
     const leftX = WIDTH * 0.05;
     const rightX = WIDTH * 0.5;
     const panelW = WIDTH * 0.42;
-    
     ctx.fillStyle = rgba(0, 0, 0, 0.4);
     ctx.fillRect(leftX, 100, panelW, HEIGHT - 140);
     ctx.strokeStyle = YELLOW;
     ctx.lineWidth = 2;
     ctx.strokeRect(leftX, 100, panelW, HEIGHT - 140);
-    
     ctx.fillStyle = WHITE;
     ctx.font = "bold 22px Arial";
     ctx.textAlign = "center";
     ctx.fillText("PREVIEW", leftX + panelW / 2, 130);
-    
     ccPreviewAnim += 0.05;
     const cc = getCurrentColor();
     const mods = getStatMultipliers();
@@ -870,21 +1153,17 @@ function drawCharCreator(ctx) {
     const previewCY = 100 + (HEIGHT - 140) * 0.55;
     const previewScale = Math.min(2.5, (HEIGHT - 200) / 180);
     const s = mods.sizeScale * previewScale;
-    
     ctx.fillStyle = rgb(110, 90, 70);
     ctx.fillRect(previewCX - 80, previewCY + 55 * s, 160, 12);
     ctx.fillStyle = rgb(80, 150, 80);
     ctx.fillRect(previewCX - 80, previewCY + 55 * s, 160, 4);
-    
     ctx.fillStyle = "rgba(180, 80, 255, 0.3)";
     ctx.beginPath(); ctx.ellipse(previewCX, previewCY - 20 * s, 50 * s, 70 * s, 0, 0, Math.PI * 2); ctx.fill();
-    
     const walk = Math.sin(ccPreviewAnim * 2) * 12 * s;
     const headR = 16 * s;
     const hipY = previewCY + 20 * s;
     const shoulderY = previewCY - 15 * s;
     const headY = shoulderY - headR - 4 * s;
-    
     ctx.strokeStyle = cc.color;
     ctx.lineWidth = 6 * s;
     ctx.beginPath();
@@ -892,29 +1171,24 @@ function drawCharCreator(ctx) {
     ctx.moveTo(previewCX, hipY); ctx.lineTo(previewCX - 14 * s - walk, previewCY + 55 * s);
     ctx.moveTo(previewCX, hipY); ctx.lineTo(previewCX, shoulderY);
     ctx.stroke();
-    
     const armSwing = Math.sin(ccPreviewAnim * 2 + Math.PI) * 10 * s;
     ctx.lineWidth = 5 * s;
     ctx.beginPath();
     ctx.moveTo(previewCX, shoulderY); ctx.lineTo(previewCX + 14 * s + armSwing, shoulderY + 22 * s);
     ctx.moveTo(previewCX, shoulderY); ctx.lineTo(previewCX - 14 * s - armSwing, shoulderY + 22 * s);
     ctx.stroke();
-    
     ctx.fillStyle = cc.color;
     ctx.beginPath(); ctx.arc(previewCX, headY, headR, 0, Math.PI * 2); ctx.fill();
     ctx.strokeStyle = "black"; ctx.lineWidth = 2 * s; ctx.stroke();
     ctx.fillStyle = "black";
     ctx.beginPath(); ctx.arc(previewCX + 6 * s, headY - 2 * s, 2 * s, 0, Math.PI * 2); ctx.fill();
-    
     ctx.fillStyle = YELLOW;
     ctx.font = `bold ${Math.min(28, WIDTH * 0.025)}px Arial`;
     ctx.textAlign = "center";
     ctx.fillText(customChar.name, previewCX, previewCY - 90 * s);
-    
     ctx.fillStyle = WHITE;
     ctx.font = "16px Arial";
     ctx.fillText(`Size: ${SIZE_OPTIONS[customChar.sizeIdx].name} (${SIZE_OPTIONS[customChar.sizeIdx].desc})`, previewCX, previewCY + 90 * s);
-    
     ctx.font = "14px Arial";
     ctx.fillStyle = WHITE;
     const totalHP = Math.round(BASE_MAX_HEALTH * mods.health);
@@ -922,16 +1196,13 @@ function drawCharCreator(ctx) {
     const totalDmg = (mods.damage * 100).toFixed(0);
     const totalJmp = (mods.jump * 100).toFixed(0);
     ctx.fillText(`❤️ HP: ${totalHP}   🏃 Speed: ${totalSpd}   ⚔️ Damage: ${totalDmg}%   🦘 Jump: ${totalJmp}%`, previewCX, previewCY + 115 * s);
-    
     ctx.fillStyle = rgba(0, 0, 0, 0.4);
     ctx.fillRect(rightX, 100, panelW, HEIGHT - 140);
     ctx.strokeStyle = YELLOW;
     ctx.lineWidth = 2;
     ctx.strokeRect(rightX, 100, panelW, HEIGHT - 140);
-    
     let y = 130;
     const rowH = 50;
-    
     const nameSelected = ccSection === 0;
     ctx.fillStyle = nameSelected ? rgba(240, 200, 40, 0.2) : rgba(255, 255, 255, 0.05);
     ctx.fillRect(rightX + 20, y, panelW - 40, rowH);
@@ -946,7 +1217,6 @@ function drawCharCreator(ctx) {
     const nameText = customChar.name + (nameSelected && Math.floor(Date.now() / 500) % 2 === 0 ? "_" : "");
     ctx.fillText(nameText, rightX + panelW - 35, y + 32);
     y += rowH + 10;
-    
     const colorSelected = ccSection === 1;
     ctx.fillStyle = colorSelected ? rgba(240, 200, 40, 0.2) : rgba(255, 255, 255, 0.05);
     ctx.fillRect(rightX + 20, y, panelW - 40, rowH + 30);
@@ -972,7 +1242,6 @@ function drawCharCreator(ctx) {
         ctx.strokeRect(sx, swatchY, swatchSize, swatchSize);
     }
     y += rowH + 40;
-    
     const rgbSelected = ccSection === 2;
     ctx.fillStyle = rgbSelected ? rgba(240, 200, 40, 0.2) : rgba(255, 255, 255, 0.05);
     ctx.fillRect(rightX + 20, y, panelW - 40, rowH + 50);
@@ -1005,7 +1274,6 @@ function drawCharCreator(ctx) {
         ctx.fillText(customChar.customColor[k], barX + barW + 30, barY + 11);
     }
     y += rowH + 60;
-    
     const sizeSelected = ccSection === 3;
     ctx.fillStyle = sizeSelected ? rgba(240, 200, 40, 0.2) : rgba(255, 255, 255, 0.05);
     ctx.fillRect(rightX + 20, y, panelW - 40, rowH);
@@ -1019,7 +1287,6 @@ function drawCharCreator(ctx) {
     ctx.font = "20px Arial";
     ctx.fillText(`< ${SIZE_OPTIONS[customChar.sizeIdx].name.toUpperCase()} >`, rightX + panelW - 35, y + 32);
     y += rowH + 10;
-    
     const statSelected = ccSection === 4;
     ctx.fillStyle = statSelected ? rgba(240, 200, 40, 0.2) : rgba(255, 255, 255, 0.05);
     ctx.fillRect(rightX + 20, y, panelW - 40, rowH * 2 + 30);
@@ -1055,7 +1322,6 @@ function drawCharCreator(ctx) {
         ctx.fillText(`${customChar.stats[k]}/${cfg.max}`, rightX + panelW - 35, sy + 13);
     }
     y += rowH * 2 + 40;
-    
     const confirmSelected = ccSection === 5;
     ctx.fillStyle = confirmSelected ? rgba(80, 200, 80, 0.4) : rgba(255, 255, 255, 0.1);
     ctx.fillRect(rightX + 20, y, panelW - 40, rowH + 10);
@@ -1064,7 +1330,6 @@ function drawCharCreator(ctx) {
     ctx.font = `bold ${confirmSelected ? 24 : 20}px Arial`;
     ctx.textAlign = "center";
     ctx.fillText(confirmSelected ? "✓ PRESS ENTER TO CONFIRM ✓" : "CONFIRM CHARACTER", rightX + panelW / 2, y + 38);
-    
     ctx.fillStyle = GRAY;
     ctx.font = "14px Arial";
     ctx.textAlign = "center";
@@ -1112,16 +1377,22 @@ function drawBackground(c,s){
     }
 }
 
-function drawHUD(c){const bw=Math.min(280,WIDTH*0.22),bh=22;const pos=[{x:20,y:20,a:'left'},{x:WIDTH-20-bw,y:20,a:'right'},{x:20,y:80,a:'left'},{x:WIDTH-20-bw,y:80,a:'right'}];for(let i=0;i<fighters.length;i++){const f=fighters[i],p=pos[i],r=f.health/f.maxHealth;c.fillStyle=BLACK;c.fillRect(p.x,p.y,bw,bh);c.fillStyle=r>0.5?GREEN:(r>0.25?YELLOW:RED);const fw=(bw-6)*r;c.fillRect(p.a==='left'?p.x+3:p.x+bw-3-fw,p.y+3,fw,bh-6);c.fillStyle=f.color;c.font="bold 14px Arial";c.textAlign=p.a;c.fillText(f.name,p.a==='left'?p.x:p.x+bw,p.y-4);const sr=f.super_charge/MAX_SUPER_CHARGE;c.fillStyle=BLACK;c.fillRect(p.x,p.y+bh+4,bw,8);if(sr>0){c.fillStyle=sr>=1?PURPLE:rgb(80,40,120);const sw=(bw-4)*sr;c.fillRect(p.a==='left'?p.x+2:p.x+bw-2-sw,p.y+bh+6,sw,4);}c.fillStyle=WHITE;c.font="bold 12px Arial";c.textAlign=p.a;c.fillText(`Wins: ${wins[i]}`,p.a==='left'?p.x:p.x+bw,p.y+bh+24);}c.fillStyle=WHITE;c.font="bold 24px Arial";c.textAlign="center";c.fillText(fighters.map(f=>f.health>0?"●":"○").join(" "),WIDTH/2,30);if(lavaRiseWarning>0&&Math.floor(lavaRiseWarning/5)%2===0){c.fillStyle=RED;c.font="bold 24px Arial";c.textAlign="center";c.fillText("WARNING: LAVA RISING!",WIDTH/2,HEIGHT/2-50);}if(radiationClouds.length>0&&!gameOver){c.fillStyle=TOXIC_GREEN;c.font="bold 14px Arial";c.textAlign="center";c.fillText("☢ TOXIC FALLOUT ACTIVE ☢",WIDTH/2,90);}if(STAGES[stageIdx]&&STAGES[stageIdx].bouncy&&!gameOver){c.fillStyle=rgb(120,230,90);c.font="bold 14px Arial";c.textAlign="center";c.fillText("🟢 SLIME WORLD - BOUNCE OFF PLATFORMS! 🟢",WIDTH/2,110);} }
+function drawHUD(c){const bw=Math.min(280,WIDTH*0.22),bh=22;const pos=[{x:20,y:20,a:'left'},{x:WIDTH-20-bw,y:20,a:'right'},{x:20,y:80,a:'left'},{x:WIDTH-20-bw,y:80,a:'right'}];for(let i=0;i<fighters.length;i++){const f=fighters[i],p=pos[i],r=f.health/f.maxHealth;c.fillStyle=BLACK;c.fillRect(p.x,p.y,bw,bh);c.fillStyle=r>0.5?GREEN:(r>0.25?YELLOW:RED);const fw=(bw-6)*r;c.fillRect(p.a==='left'?p.x+3:p.x+bw-3-fw,p.y+3,fw,bh-6);c.fillStyle=f.color;c.font="bold 14px Arial";c.textAlign=p.a;c.fillText(f.name+(f.isDead?" 💀":""),p.a==='left'?p.x:p.x+bw,p.y-4);const sr=f.super_charge/MAX_SUPER_CHARGE;c.fillStyle=BLACK;c.fillRect(p.x,p.y+bh+4,bw,8);if(sr>0){c.fillStyle=sr>=1?PURPLE:rgb(80,40,120);const sw=(bw-4)*sr;c.fillRect(p.a==='left'?p.x+2:p.x+bw-2-sw,p.y+bh+6,sw,4);}c.fillStyle=WHITE;c.font="bold 12px Arial";c.textAlign=p.a;c.fillText(`Wins: ${wins[i]}`,p.a==='left'?p.x:p.x+bw,p.y+bh+24);}c.fillStyle=WHITE;c.font="bold 24px Arial";c.textAlign="center";c.fillText(fighters.map(f=>f.health>0?"●":"○").join(" "),WIDTH/2,30);if(lavaRiseWarning>0&&Math.floor(lavaRiseWarning/5)%2===0){c.fillStyle=RED;c.font="bold 24px Arial";c.textAlign="center";c.fillText("WARNING: LAVA RISING!",WIDTH/2,HEIGHT/2-50);}if(radiationClouds.length>0&&!gameOver){c.fillStyle=TOXIC_GREEN;c.font="bold 14px Arial";c.textAlign="center";c.fillText("☢ TOXIC FALLOUT ACTIVE ☢",WIDTH/2,90);}if(STAGES[stageIdx]&&STAGES[stageIdx].bouncy&&!gameOver){c.fillStyle=rgb(120,230,90);c.font="bold 14px Arial";c.textAlign="center";c.fillText("🟢 SLIME WORLD - BOUNCE OFF PLATFORMS! 🟢",WIDTH/2,110);} }
 
 function update() {
     if(state==="mode_select"||state==="char_create")return;
     if(state==="select"){if(p1Ready){selectConfirmTimer++;if(selectConfirmTimer>45){selectConfirmTimer=0;worldLocked=false;worldConfirmTimer=0;state="world_select";}}return;}
     if(state==="world_select"){if(worldLocked){worldConfirmTimer++;if(worldConfirmTimer>45){resetFighters();gameOver=false;winner=null;spawnTimer=WEAPON_SPAWN_INTERVAL;armorSpawnTimer=ARMOR_SPAWN_INTERVAL;fireballSpawnTimer=Math.random()*(FIREBALL_SPAWN_MAX-FIREBALL_SPAWN_MIN)+FIREBALL_SPAWN_MIN;worldConfirmTimer=0;state="playing";}}return;}
+    
+    // Always update dead bodies (even after game over so death animations finish)
+    for (const f of fighters) {
+        if (f.isDead) f.updateDeath();
+    }
+    
     if(!gameOver){
         for(let i=0;i<fighters.length;i++){if(fighters[i].isAI)updateAIFor(fighters[i],i-1);}
         for(let i=0;i<fighters.length;i++){fighters[i].handleInput(weapons,armors,arrows,bombs,fighters[i].isAI?aiKeysPool[i-1]:keys);}
-        for(const f of fighters)f.physics();
+        for(const f of fighters) if (!f.isDead) f.physics();
         checkHits();checkAerialComboHits();updateArrows();
         asteroidSpawnTimer--;
         if (asteroidSpawnTimer <= 0) { spawnAsteroidWave(); asteroidSpawnTimer = Math.floor(Math.random() * (ASTEROID_SPAWN_MAX - ASTEROID_SPAWN_MIN)) + ASTEROID_SPAWN_MIN; }
@@ -1159,7 +1430,9 @@ function draw() {
     drawBackground(ctx,STAGES[stageIdx]);
     for (const w of asteroidWarnings) w.draw(ctx);
     for(const w of weapons)w.draw(ctx);for(const a of armors)a.draw(ctx);
-    for(const f of fighters)f.draw(ctx);
+    // Draw dead bodies first (behind alive fighters)
+    for(const f of fighters) if(f.isDead) f.draw(ctx);
+    for(const f of fighters) if(!f.isDead) f.draw(ctx);
     for(const a of arrows)a.draw(ctx);for(const b of bombs)b.draw(ctx);
     for(const e of explosions)e.draw(ctx);for(const e of nukeExplosions)e.draw(ctx);
     for(const r of radiationClouds)r.draw(ctx);
@@ -1172,7 +1445,6 @@ function draw() {
     ctx.restore();
     drawHUD(ctx);
 
-    // --- UPDATED: Game Over Screen with R Press Instructions ---
     if(gameOver){
         ctx.fillStyle=rgba(0,0,0,0.7);
         ctx.fillRect(0,0,WIDTH,HEIGHT);
