@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Stickman Battle - Start Button!</title>
+<title>Stickman Battle - Fixed Weapon Select!</title>
 <style>
     body { margin: 0; overflow: hidden; background: #1a1a1a; font-family: Arial, sans-serif; color: white; }
     canvas { display: block; background: #000; }
@@ -336,14 +336,12 @@ function updateCursor() {
         y += rowH * 2 + 40;
         if (mouseX >= rightX + 20 && mouseX <= rightX + panelW - 20 && mouseY >= y && mouseY <= y + rowH + 10) isClickable = true;
     } else if (state === "select") {
-        // Weapon boxes
         const cw = Math.min(100, (WIDTH - 60) / WEAPON_CHOICES.length);
         const sx = WIDTH / 2 - (WEAPON_CHOICES.length * cw) / 2 + cw / 2;
         for (let i = 0; i < WEAPON_CHOICES.length; i++) {
             const cx = sx + i * cw;
             if (mouseX >= cx - 40 && mouseX <= cx + 40 && mouseY >= 150 && mouseY <= 230) { isClickable = true; break; }
         }
-        // START button
         if (p1Ready && isStartButtonHovered()) isClickable = true;
     } else if (state === "world_select") {
         if (mouseX >= WIDTH / 2 - 120 && mouseX <= WIDTH / 2 - 60 && mouseY >= 120 && mouseY <= 160) isClickable = true;
@@ -355,13 +353,10 @@ function updateCursor() {
     canvas.style.cursor = isClickable ? 'pointer' : 'default';
 }
 
-// --- NEW: START BUTTON HELPERS ---
 function getStartButtonRect() {
     const btnW = Math.min(300, WIDTH * 0.25);
     const btnH = 70;
-    const btnX = WIDTH / 2 - btnW / 2;
-    const btnY = HEIGHT - 140;
-    return { x: btnX, y: btnY, w: btnW, h: btnH };
+    return { x: WIDTH / 2 - btnW / 2, y: HEIGHT - 140, w: btnW, h: btnH };
 }
 
 function isStartButtonHovered() {
@@ -374,7 +369,7 @@ function handleClick(x, y) {
         const bw = Math.min(450, WIDTH * 0.35), bh = 70, sy = HEIGHT * 0.32;
         for (let i = 0; i < MODE_CHOICES.length; i++) {
             const y = sy + i * (bh + 20);
-            if (x >= WIDTH / 2 - bw / 2 && x <= WIDTH / 2 + bw / 2 && mouseY >= y && mouseY <= y + bh) {
+            if (x >= WIDTH / 2 - bw / 2 && x <= WIDTH / 2 + bw / 2 && y >= sy + i * (bh + 20) && y <= sy + i * (bh + 20) + bh) {
                 modeIdx = i;
                 gameMode = ["1v1", "1v2", "1v3", "multi"][i];
                 sounds.menu_confirm();
@@ -385,18 +380,20 @@ function handleClick(x, y) {
     } else if (state === "char_create") {
         handleCharCreatorClick(x, y);
     } else if (state === "select") {
-        // Check weapon boxes first
+        // --- FIXED: Check weapon boxes first ---
         const cw = Math.min(100, (WIDTH - 60) / WEAPON_CHOICES.length);
         const sx = WIDTH / 2 - (WEAPON_CHOICES.length * cw) / 2 + cw / 2;
         for (let i = 0; i < WEAPON_CHOICES.length; i++) {
             const cx = sx + i * cw;
             if (x >= cx - 40 && x <= cx + 40 && y >= 150 && y <= 230) {
+                // --- FIX: Select AND confirm weapon instantly ---
                 p1Idx = i;
-                sounds.menu_select();
+                p1Ready = true;
+                sounds.menu_confirm();
                 return;
             }
         }
-        // Check START button
+        // Then check START button
         if (p1Ready) {
             const btn = getStartButtonRect();
             if (x >= btn.x && x <= btn.x + btn.w && y >= btn.y && y <= btn.y + btn.h) {
@@ -429,7 +426,6 @@ function handleClick(x, y) {
     }
 }
 
-// --- NEW: Advance from weapon select to world select ---
 function advanceFromWeaponSelect() {
     sounds.start_game();
     worldLocked = false;
@@ -938,6 +934,7 @@ function resetFighters() {
     for(let i=0;i<Math.min(2,fighters.length);i++)spawnArmor();
 }
 
+// --- FIXED: Full keyboard support for weapon select ---
 function handleMenuInput(code) {
     if(state==="mode_select"){
         if(code==='ArrowUp'||code==='KeyW')modeIdx=(modeIdx-1+MODE_CHOICES.length)%MODE_CHOICES.length;
@@ -948,17 +945,29 @@ function handleMenuInput(code) {
             state="char_create";
         }
     }
-    // --- NEW: Weapon select keyboard controls ---
+    // --- FIXED: Weapon select with full keyboard support ---
     else if(state==="select"){
         if(!p1Ready){
-            if(code==='KeyA')p1Idx=(p1Idx-1+WEAPON_CHOICES.length)%WEAPON_CHOICES.length;
-            else if(code==='KeyD')p1Idx=(p1Idx+1)%WEAPON_CHOICES.length;
-            else if(code==='KeyF') { p1Ready = true; sounds.menu_confirm(); }
+            // Browse weapons with A/D or Left/Right arrows
+            if(code==='KeyA'||code==='ArrowLeft'){
+                p1Idx=(p1Idx-1+WEAPON_CHOICES.length)%WEAPON_CHOICES.length;
+                sounds.menu_select();
+            }
+            else if(code==='KeyD'||code==='ArrowRight'){
+                p1Idx=(p1Idx+1)%WEAPON_CHOICES.length;
+                sounds.menu_select();
+            }
+            // Confirm weapon with F, Enter, or Space
+            else if(code==='KeyF'||code==='Enter'||code==='Space'){
+                p1Ready=true;
+                sounds.menu_confirm();
+            }
         } else {
-            // When ready, Enter/Space/ESC can advance or go back
+            // Already ready - can start or go back
             if(code==='Enter'||code==='Space'||code==='KeyF'){
                 advanceFromWeaponSelect();
-            } else if(code==='Escape'||code==='Backspace'){
+            } else if(code==='Escape'||code==='Backspace'||code==='KeyA'||code==='KeyD'||code==='ArrowLeft'||code==='ArrowRight'){
+                // Go back to change weapon
                 p1Ready = false;
                 sounds.menu_select();
             }
@@ -1234,7 +1243,7 @@ function drawHUD(c){const bw=Math.min(280,WIDTH*0.22),bh=22;const pos=[{x:20,y:2
 
 function update() {
     if(state==="mode_select"||state==="char_create")return;
-    if(state==="select")return; // Removed auto-advance - now requires START button click
+    if(state==="select")return;
     if(state==="world_select"){if(worldLocked){worldConfirmTimer++;if(worldConfirmTimer>45){resetFighters();gameOver=false;winner=null;spawnTimer=WEAPON_SPAWN_INTERVAL;armorSpawnTimer=ARMOR_SPAWN_INTERVAL;fireballSpawnTimer=Math.random()*(FIREBALL_SPAWN_MAX-FIREBALL_SPAWN_MIN)+FIREBALL_SPAWN_MIN;worldConfirmTimer=0;state="playing";}}return;}
     if(!gameOver){
         for(let i=0;i<fighters.length;i++){if(fighters[i].isAI)updateAIFor(fighters[i],i-1);}
@@ -1291,7 +1300,6 @@ function draw() {
     }
     if(state==="char_create"){drawCharCreator(ctx);return;}
     
-    // --- WEAPON SELECT SCREEN WITH START BUTTON ---
     if(state==="select"){
         ctx.fillStyle=rgb(20,20,20);ctx.fillRect(0,0,WIDTH,HEIGHT);
         ctx.fillStyle=WHITE;ctx.font=`bold ${Math.min(32,WIDTH*0.03)}px Arial`;ctx.textAlign="center";
@@ -1308,29 +1316,21 @@ function draw() {
             if(i===p1Idx){ctx.fillStyle=RED;ctx.fillText("P1",cx,140);}
         }
         
-        // Status text
         ctx.fillStyle=p1Ready?GREEN:RED;
         ctx.font=`bold ${Math.min(22,WIDTH*0.02)}px Arial`;
-        ctx.fillText(`Player 1: ${p1Ready?"✓ READY!":"Click a weapon or press A/D + F"}`,WIDTH/2,280);
+        ctx.fillText(`Player 1: ${p1Ready?"✓ READY!":"Click a weapon OR use A/D + F"}`,WIDTH/2,280);
         
-        // Character info
         ctx.fillStyle=PURPLE;ctx.font="bold 18px Arial";
         ctx.fillText(`Playing as: ${customChar.name} (${SIZE_OPTIONS[customChar.sizeIdx].name})`,WIDTH/2,320);
         
-        // --- NEW: BIG START BUTTON ---
         const btn = getStartButtonRect();
         const btnHover = isStartButtonHovered();
         
         if (p1Ready) {
-            // Pulsing green button when ready
             const pulse = 0.7 + 0.3 * Math.sin(Date.now() * 0.008);
             const glowSize = btnHover ? 15 : 8;
-            
-            // Glow effect
             ctx.shadowColor = GREEN;
             ctx.shadowBlur = glowSize * pulse;
-            
-            // Button background
             const grad = ctx.createLinearGradient(btn.x, btn.y, btn.x, btn.y + btn.h);
             if (btnHover) {
                 grad.addColorStop(0, rgb(100, 240, 120));
@@ -1340,8 +1340,6 @@ function draw() {
                 grad.addColorStop(1, rgb(30, 160, 60));
             }
             ctx.fillStyle = grad;
-            
-            // Rounded rectangle
             const radius = 15;
             ctx.beginPath();
             ctx.moveTo(btn.x + radius, btn.y);
@@ -1355,26 +1353,18 @@ function draw() {
             ctx.quadraticCurveTo(btn.x, btn.y, btn.x + radius, btn.y);
             ctx.closePath();
             ctx.fill();
-            
-            // Border
             ctx.strokeStyle = btnHover ? WHITE : rgb(200, 255, 200);
             ctx.lineWidth = btnHover ? 4 : 3;
             ctx.stroke();
-            
             ctx.shadowBlur = 0;
-            
-            // Text
             ctx.fillStyle = WHITE;
             ctx.font = `bold ${Math.min(36, WIDTH * 0.03)}px Arial`;
             ctx.textAlign = "center";
             ctx.fillText("▶ START GAME ▶", btn.x + btn.w/2, btn.y + btn.h/2 + 10);
-            
-            // Subtitle
             ctx.fillStyle = rgba(255, 255, 255, 0.8);
             ctx.font = "14px Arial";
             ctx.fillText("Click here or press ENTER", btn.x + btn.w/2, btn.y + btn.h + 25);
         } else {
-            // Disabled gray button when not ready
             ctx.fillStyle = rgb(60, 60, 60);
             const radius = 15;
             ctx.beginPath();
@@ -1389,22 +1379,23 @@ function draw() {
             ctx.quadraticCurveTo(btn.x, btn.y, btn.x + radius, btn.y);
             ctx.closePath();
             ctx.fill();
-            
             ctx.strokeStyle = GRAY;
             ctx.lineWidth = 2;
             ctx.stroke();
-            
             ctx.fillStyle = rgb(140, 140, 140);
             ctx.font = `bold ${Math.min(32, WIDTH * 0.028)}px Arial`;
             ctx.textAlign = "center";
             ctx.fillText("🔒 SELECT A WEAPON FIRST", btn.x + btn.w/2, btn.y + btn.h/2 + 10);
         }
         
-        // Back hint
+        // Keyboard hints
+        ctx.fillStyle = GRAY;
+        ctx.font = "13px Arial";
+        ctx.textAlign = "center";
         if (p1Ready) {
-            ctx.fillStyle = GRAY;
-            ctx.font = "13px Arial";
-            ctx.fillText("Press ESC or Backspace to change weapon", WIDTH/2, HEIGHT - 20);
+            ctx.fillText("A/D to change weapon  |  ENTER to start  |  ESC to go back", WIDTH/2, HEIGHT - 20);
+        } else {
+            ctx.fillText("A/D or ←/→ to browse  |  F or ENTER to confirm", WIDTH/2, HEIGHT - 20);
         }
         return;
     }
