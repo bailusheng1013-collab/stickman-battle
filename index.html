@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Stickman Battle - Full Mouse Support!</title>
+<title>Stickman Battle - Start Button!</title>
 <style>
     body { margin: 0; overflow: hidden; background: #1a1a1a; font-family: Arial, sans-serif; color: white; }
     canvas { display: block; background: #000; }
@@ -221,14 +221,19 @@ const sounds = {
         if (size === 'large') playTone(40, 0.8, 'sawtooth', 0.3);
     },
     menu_select: () => playTone(600, 0.08, 'sine', 0.1),
-    menu_confirm: () => { playTone(800, 0.1, 'sine', 0.12); setTimeout(() => playTone(1000, 0.1, 'sine', 0.12), 80); }
+    menu_confirm: () => { playTone(800, 0.1, 'sine', 0.12); setTimeout(() => playTone(1000, 0.1, 'sine', 0.12), 80); },
+    start_game: () => {
+        playTone(600, 0.1, 'square', 0.15);
+        setTimeout(() => playTone(800, 0.1, 'square', 0.15), 100);
+        setTimeout(() => playTone(1000, 0.15, 'square', 0.15), 200);
+    }
 };
 
 let state = "mode_select";
 let gameMode = "1v1";
 let modeIdx = 0;
 let wins = [0, 0, 0, 0];
-let p1Idx = 0, p1Ready = false, selectConfirmTimer = 0;
+let p1Idx = 0, p1Ready = false;
 let stageIdx = 0, worldLocked = false, worldConfirmTimer = 0;
 let currentLavaY = GROUND_Y, lavaRiseTimer = LAVA_RISE_INTERVAL, lavaRiseWarning = 0;
 let cameraY = 0, targetCameraY = 0;
@@ -254,25 +259,19 @@ let ccNameCursor = 0;
 let ccPreviewAnim = 0;
 let nameInputFocused = false;
 
-// --- MOUSE STATE ---
 let mouseX = 0, mouseY = 0;
 let mouseDragging = false;
-let dragTarget = null; // 'rgb_r', 'rgb_g', 'rgb_b', 'stat_health', etc.
+let dragTarget = null;
 
 const keys = {};
 const aiKeysPool = [{}, {}, {}];
 
-// --- MOUSE EVENT LISTENERS ---
 canvas.addEventListener('mousemove', (e) => {
     const rect = canvas.getBoundingClientRect();
     mouseX = e.clientX - rect.left;
     mouseY = e.clientY - rect.top;
     updateCursor();
-    
-    // Handle dragging for sliders
-    if (mouseDragging && dragTarget) {
-        handleDrag(mouseX, mouseY);
-    }
+    if (mouseDragging && dragTarget) handleDrag(mouseX, mouseY);
 });
 
 canvas.addEventListener('mousedown', (e) => {
@@ -283,26 +282,15 @@ canvas.addEventListener('mousedown', (e) => {
     handleClick(mouseX, mouseY);
 });
 
-canvas.addEventListener('mouseup', (e) => {
-    mouseDragging = false;
-    dragTarget = null;
-});
-
-canvas.addEventListener('mouseleave', (e) => {
-    mouseDragging = false;
-    dragTarget = null;
-});
+canvas.addEventListener('mouseup', () => { mouseDragging = false; dragTarget = null; });
+canvas.addEventListener('mouseleave', () => { mouseDragging = false; dragTarget = null; });
 
 function handleDrag(x, y) {
     if (state !== "char_create") return;
-    
     const rightX = WIDTH * 0.5;
     const panelW = WIDTH * 0.42;
-    
-    // RGB sliders drag
     if (dragTarget && dragTarget.startsWith('rgb_')) {
         const channel = dragTarget.split('_')[1];
-        const idx = channel === 'r' ? 0 : (channel === 'g' ? 1 : 2);
         const barX = rightX + 35;
         const barW = panelW - 100;
         const val = Math.max(0, Math.min(1, (x - barX) / barW));
@@ -310,8 +298,6 @@ function handleDrag(x, y) {
         customChar.customColor[channel] = Math.round(val * 255);
         customChar.customDark[channel] = Math.max(0, Math.floor(customChar.customColor[channel] * 0.6));
     }
-    
-    // Stat bars drag
     if (dragTarget && dragTarget.startsWith('stat_')) {
         const statKey = dragTarget.split('_')[1];
         const cfg = STAT_CONFIG[statKey];
@@ -322,78 +308,65 @@ function handleDrag(x, y) {
         const currentVal = customChar.stats[statKey];
         const totalUsed = Object.values(customChar.stats).reduce((a, b) => a + b, 0);
         const diff = targetVal - currentVal;
-        
-        if (diff > 0 && totalUsed + diff <= STAT_POINTS_TOTAL && targetVal <= cfg.max) {
-            customChar.stats[statKey] = targetVal;
-        } else if (diff < 0 && targetVal >= cfg.min) {
-            customChar.stats[statKey] = targetVal;
-        }
+        if (diff > 0 && totalUsed + diff <= STAT_POINTS_TOTAL && targetVal <= cfg.max) customChar.stats[statKey] = targetVal;
+        else if (diff < 0 && targetVal >= cfg.min) customChar.stats[statKey] = targetVal;
     }
 }
 
 function updateCursor() {
     let isClickable = false;
-    
     if (state === "mode_select") {
         const bw = Math.min(450, WIDTH * 0.35), bh = 70, sy = HEIGHT * 0.32;
         for (let i = 0; i < MODE_CHOICES.length; i++) {
             const y = sy + i * (bh + 20);
-            if (mouseX >= WIDTH / 2 - bw / 2 && mouseX <= WIDTH / 2 + bw / 2 && mouseY >= y && mouseY <= y + bh) {
-                isClickable = true;
-                break;
-            }
+            if (mouseX >= WIDTH / 2 - bw / 2 && mouseX <= WIDTH / 2 + bw / 2 && mouseY >= y && mouseY <= y + bh) { isClickable = true; break; }
         }
     } else if (state === "char_create") {
-        const rightX = WIDTH * 0.5;
-        const panelW = WIDTH * 0.42;
-        
-        // Check all clickable regions
-        let y = 130;
-        const rowH = 50;
-        
-        // Name section
+        const rightX = WIDTH * 0.5, panelW = WIDTH * 0.42;
+        let y = 130; const rowH = 50;
         if (mouseX >= rightX + 20 && mouseX <= rightX + panelW - 20 && mouseY >= y && mouseY <= y + rowH) isClickable = true;
         y += rowH + 10;
-        
-        // Color section
         if (mouseX >= rightX + 20 && mouseX <= rightX + panelW - 20 && mouseY >= y && mouseY <= y + rowH + 30) isClickable = true;
         y += rowH + 40;
-        
-        // RGB section
         if (mouseX >= rightX + 20 && mouseX <= rightX + panelW - 20 && mouseY >= y && mouseY <= y + rowH + 50) isClickable = true;
         y += rowH + 60;
-        
-        // Size section
         if (mouseX >= rightX + 20 && mouseX <= rightX + panelW - 20 && mouseY >= y && mouseY <= y + rowH) isClickable = true;
         y += rowH + 10;
-        
-        // Stats section
         if (mouseX >= rightX + 20 && mouseX <= rightX + panelW - 20 && mouseY >= y && mouseY <= y + rowH * 2 + 30) isClickable = true;
         y += rowH * 2 + 40;
-        
-        // Confirm button
         if (mouseX >= rightX + 20 && mouseX <= rightX + panelW - 20 && mouseY >= y && mouseY <= y + rowH + 10) isClickable = true;
     } else if (state === "select") {
+        // Weapon boxes
         const cw = Math.min(100, (WIDTH - 60) / WEAPON_CHOICES.length);
         const sx = WIDTH / 2 - (WEAPON_CHOICES.length * cw) / 2 + cw / 2;
         for (let i = 0; i < WEAPON_CHOICES.length; i++) {
             const cx = sx + i * cw;
-            if (mouseX >= cx - 40 && mouseX <= cx + 40 && mouseY >= 150 && mouseY <= 230) {
-                isClickable = true;
-                break;
-            }
+            if (mouseX >= cx - 40 && mouseX <= cx + 40 && mouseY >= 150 && mouseY <= 230) { isClickable = true; break; }
         }
+        // START button
+        if (p1Ready && isStartButtonHovered()) isClickable = true;
     } else if (state === "world_select") {
-        // Arrows
         if (mouseX >= WIDTH / 2 - 120 && mouseX <= WIDTH / 2 - 60 && mouseY >= 120 && mouseY <= 160) isClickable = true;
         else if (mouseX >= WIDTH / 2 + 60 && mouseX <= WIDTH / 2 + 120 && mouseY >= 120 && mouseY <= 160) isClickable = true;
-        // Confirm area
         else if (mouseY >= 280 && mouseY <= 340) isClickable = true;
     } else if (state === "over") {
         isClickable = true;
     }
-    
     canvas.style.cursor = isClickable ? 'pointer' : 'default';
+}
+
+// --- NEW: START BUTTON HELPERS ---
+function getStartButtonRect() {
+    const btnW = Math.min(300, WIDTH * 0.25);
+    const btnH = 70;
+    const btnX = WIDTH / 2 - btnW / 2;
+    const btnY = HEIGHT - 140;
+    return { x: btnX, y: btnY, w: btnW, h: btnH };
+}
+
+function isStartButtonHovered() {
+    const btn = getStartButtonRect();
+    return mouseX >= btn.x && mouseX <= btn.x + btn.w && mouseY >= btn.y && mouseY <= btn.y + btn.h;
 }
 
 function handleClick(x, y) {
@@ -412,6 +385,7 @@ function handleClick(x, y) {
     } else if (state === "char_create") {
         handleCharCreatorClick(x, y);
     } else if (state === "select") {
+        // Check weapon boxes first
         const cw = Math.min(100, (WIDTH - 60) / WEAPON_CHOICES.length);
         const sx = WIDTH / 2 - (WEAPON_CHOICES.length * cw) / 2 + cw / 2;
         for (let i = 0; i < WEAPON_CHOICES.length; i++) {
@@ -419,7 +393,14 @@ function handleClick(x, y) {
             if (x >= cx - 40 && x <= cx + 40 && y >= 150 && y <= 230) {
                 p1Idx = i;
                 sounds.menu_select();
-                break;
+                return;
+            }
+        }
+        // Check START button
+        if (p1Ready) {
+            const btn = getStartButtonRect();
+            if (x >= btn.x && x <= btn.x + btn.w && y >= btn.y && y <= btn.y + btn.h) {
+                advanceFromWeaponSelect();
             }
         }
     } else if (state === "world_select") {
@@ -448,154 +429,107 @@ function handleClick(x, y) {
     }
 }
 
+// --- NEW: Advance from weapon select to world select ---
+function advanceFromWeaponSelect() {
+    sounds.start_game();
+    worldLocked = false;
+    worldConfirmTimer = 0;
+    state = "world_select";
+}
+
 function handleCharCreatorClick(x, y) {
     const rightX = WIDTH * 0.5;
     const panelW = WIDTH * 0.42;
     let sectionY = 130;
     const rowH = 50;
     
-    // Section 0: Name
     if (x >= rightX + 20 && x <= rightX + panelW - 20 && y >= sectionY && y <= sectionY + rowH) {
-        ccSection = 0;
-        nameInputFocused = true;
-        sounds.menu_select();
-        return;
+        ccSection = 0; nameInputFocused = true; sounds.menu_select(); return;
     }
     sectionY += rowH + 10;
     
-    // Section 1: Color presets
     if (x >= rightX + 20 && x <= rightX + panelW - 20 && y >= sectionY && y <= sectionY + rowH + 30) {
-        ccSection = 1;
-        nameInputFocused = false;
-        const swatchSize = 28;
-        const swatchStartX = rightX + 35;
-        const swatchY = sectionY + 40;
+        ccSection = 1; nameInputFocused = false;
+        const swatchSize = 28, swatchStartX = rightX + 35, swatchY = sectionY + 40;
         for (let i = 0; i < PRESET_COLORS.length; i++) {
             const sx = swatchStartX + i * (swatchSize + 6);
             if (x >= sx && x <= sx + swatchSize && y >= swatchY && y <= swatchY + swatchSize) {
-                customChar.colorIdx = i;
-                customChar.useCustomColor = false;
-                sounds.menu_select();
-                break;
+                customChar.colorIdx = i; customChar.useCustomColor = false; sounds.menu_select(); break;
             }
         }
         return;
     }
     sectionY += rowH + 40;
     
-    // Section 2: RGB sliders
     if (x >= rightX + 20 && x <= rightX + panelW - 20 && y >= sectionY && y <= sectionY + rowH + 50) {
-        ccSection = 2;
-        nameInputFocused = false;
+        ccSection = 2; nameInputFocused = false;
         for (let i = 0; i < 3; i++) {
-            const barX = rightX + 35;
-            const barY = sectionY + 40 + i * 20;
-            const barW = panelW - 100;
-            const barH = 14;
+            const barX = rightX + 35, barY = sectionY + 40 + i * 20, barW = panelW - 100, barH = 14;
             if (x >= barX && x <= barX + barW && y >= barY - 5 && y <= barY + barH + 5) {
-                ccStatIdx = i;
-                customChar.useCustomColor = true;
+                ccStatIdx = i; customChar.useCustomColor = true;
                 const k = ['r', 'g', 'b'][i];
                 const val = Math.max(0, Math.min(1, (x - barX) / barW));
                 customChar.customColor[k] = Math.round(val * 255);
                 customChar.customDark[k] = Math.max(0, Math.floor(customChar.customColor[k] * 0.6));
-                mouseDragging = true;
-                dragTarget = 'rgb_' + k;
-                sounds.menu_select();
-                break;
+                mouseDragging = true; dragTarget = 'rgb_' + k;
+                sounds.menu_select(); break;
             }
         }
         return;
     }
     sectionY += rowH + 60;
     
-    // Section 3: Size
     if (x >= rightX + 20 && x <= rightX + panelW - 20 && y >= sectionY && y <= sectionY + rowH) {
-        ccSection = 3;
-        nameInputFocused = false;
-        // Check left arrow
+        ccSection = 3; nameInputFocused = false;
         if (x >= rightX + panelW - 150 && x <= rightX + panelW - 110) {
-            customChar.sizeIdx = (customChar.sizeIdx - 1 + SIZE_OPTIONS.length) % SIZE_OPTIONS.length;
-            sounds.menu_select();
-        }
-        // Check right arrow
-        else if (x >= rightX + panelW - 100 && x <= rightX + panelW - 60) {
-            customChar.sizeIdx = (customChar.sizeIdx + 1) % SIZE_OPTIONS.length;
-            sounds.menu_select();
-        }
-        // Click on size name itself cycles
-        else if (x >= rightX + 150 && x <= rightX + panelW - 160) {
-            customChar.sizeIdx = (customChar.sizeIdx + 1) % SIZE_OPTIONS.length;
-            sounds.menu_select();
+            customChar.sizeIdx = (customChar.sizeIdx - 1 + SIZE_OPTIONS.length) % SIZE_OPTIONS.length; sounds.menu_select();
+        } else if (x >= rightX + panelW - 100 && x <= rightX + panelW - 60) {
+            customChar.sizeIdx = (customChar.sizeIdx + 1) % SIZE_OPTIONS.length; sounds.menu_select();
+        } else if (x >= rightX + 150 && x <= rightX + panelW - 160) {
+            customChar.sizeIdx = (customChar.sizeIdx + 1) % SIZE_OPTIONS.length; sounds.menu_select();
         }
         return;
     }
     sectionY += rowH + 10;
     
-    // Section 4: Stats
     if (x >= rightX + 20 && x <= rightX + panelW - 20 && y >= sectionY && y <= sectionY + rowH * 2 + 30) {
-        ccSection = 4;
-        nameInputFocused = false;
+        ccSection = 4; nameInputFocused = false;
         const statKeys = ['health', 'speed', 'damage', 'jump'];
         for (let i = 0; i < 4; i++) {
-            const barX = rightX + 140;
-            const barW = panelW - 220;
-            const barH = 16;
-            const sy = sectionY + 40 + i * 28;
+            const barX = rightX + 140, barW = panelW - 220, barH = 16, sy = sectionY + 40 + i * 28;
             if (x >= barX - 5 && x <= barX + barW + 5 && y >= sy - 5 && y <= sy + barH + 5) {
                 ccStatIdx = i;
-                const k = statKeys[i];
-                const cfg = STAT_CONFIG[k];
+                const k = statKeys[i]; const cfg = STAT_CONFIG[k];
                 const val = Math.max(0, Math.min(1, (x - barX) / barW));
                 const targetVal = Math.round(val * cfg.max);
                 const currentVal = customChar.stats[k];
                 const totalUsed = Object.values(customChar.stats).reduce((a, b) => a + b, 0);
                 const diff = targetVal - currentVal;
-                
-                if (diff > 0 && totalUsed + diff <= STAT_POINTS_TOTAL && targetVal <= cfg.max) {
-                    customChar.stats[k] = targetVal;
-                } else if (diff < 0 && targetVal >= cfg.min) {
-                    customChar.stats[k] = targetVal;
-                }
-                mouseDragging = true;
-                dragTarget = 'stat_' + k;
-                sounds.menu_select();
-                break;
+                if (diff > 0 && totalUsed + diff <= STAT_POINTS_TOTAL && targetVal <= cfg.max) customChar.stats[k] = targetVal;
+                else if (diff < 0 && targetVal >= cfg.min) customChar.stats[k] = targetVal;
+                mouseDragging = true; dragTarget = 'stat_' + k;
+                sounds.menu_select(); break;
             }
         }
         return;
     }
     sectionY += rowH * 2 + 40;
     
-    // Section 5: Confirm
     if (x >= rightX + 20 && x <= rightX + panelW - 20 && y >= sectionY && y <= sectionY + rowH + 10) {
-        nameInputFocused = false;
-        sounds.menu_confirm();
-        state = "select";
-        return;
+        nameInputFocused = false; sounds.menu_confirm(); state = "select"; return;
     }
-    
-    // Clicked outside everything - unfocus name
     nameInputFocused = false;
 }
 
 function handleCharCreateInput(code) {
     if (state !== "char_create") return;
-    
     if (ccSection === 0) {
         if (code === 'ArrowDown' || code === 'KeyS') { ccSection = 1; nameInputFocused = false; sounds.menu_select(); }
-        else if (code === 'Backspace') {
-            if (customChar.name.length > 0 && ccNameCursor > 0) {
-                customChar.name = customChar.name.slice(0, ccNameCursor - 1) + customChar.name.slice(ccNameCursor);
-                ccNameCursor--;
-            }
-        } else if (code === 'ArrowLeft' || code === 'KeyA') {
-            if (ccNameCursor > 0) ccNameCursor--;
-        } else if (code === 'ArrowRight' || code === 'KeyD') {
-            if (ccNameCursor < customChar.name.length) ccNameCursor++;
-        } else if (code === 'Enter') {
-            ccSection = 1; nameInputFocused = false; sounds.menu_select();
-        } else if (code.startsWith('Key') && code.length === 4 && customChar.name.length < 12) {
+        else if (code === 'Backspace') { if (customChar.name.length > 0 && ccNameCursor > 0) { customChar.name = customChar.name.slice(0, ccNameCursor - 1) + customChar.name.slice(ccNameCursor); ccNameCursor--; } }
+        else if (code === 'ArrowLeft' || code === 'KeyA') { if (ccNameCursor > 0) ccNameCursor--; }
+        else if (code === 'ArrowRight' || code === 'KeyD') { if (ccNameCursor < customChar.name.length) ccNameCursor++; }
+        else if (code === 'Enter') { ccSection = 1; nameInputFocused = false; sounds.menu_select(); }
+        else if (code.startsWith('Key') && code.length === 4 && customChar.name.length < 12) {
             const char = code.charAt(3);
             customChar.name = customChar.name.slice(0, ccNameCursor) + char + customChar.name.slice(ccNameCursor);
             ccNameCursor++;
@@ -603,79 +537,32 @@ function handleCharCreateInput(code) {
     } else if (ccSection === 1) {
         if (code === 'ArrowUp' || code === 'KeyW') { ccSection = 0; sounds.menu_select(); }
         else if (code === 'ArrowDown' || code === 'KeyS') { ccSection = 2; sounds.menu_select(); }
-        else if (code === 'ArrowLeft' || code === 'KeyA') {
-            customChar.colorIdx = (customChar.colorIdx - 1 + PRESET_COLORS.length) % PRESET_COLORS.length;
-            customChar.useCustomColor = false;
-            sounds.menu_select();
-        } else if (code === 'ArrowRight' || code === 'KeyD') {
-            customChar.colorIdx = (customChar.colorIdx + 1) % PRESET_COLORS.length;
-            customChar.useCustomColor = false;
-            sounds.menu_select();
-        }
+        else if (code === 'ArrowLeft' || code === 'KeyA') { customChar.colorIdx = (customChar.colorIdx - 1 + PRESET_COLORS.length) % PRESET_COLORS.length; customChar.useCustomColor = false; sounds.menu_select(); }
+        else if (code === 'ArrowRight' || code === 'KeyD') { customChar.colorIdx = (customChar.colorIdx + 1) % PRESET_COLORS.length; customChar.useCustomColor = false; sounds.menu_select(); }
     } else if (ccSection === 2) {
         if (code === 'ArrowUp' || code === 'KeyW') { ccSection = 1; sounds.menu_select(); }
         else if (code === 'ArrowDown' || code === 'KeyS') { ccSection = 3; sounds.menu_select(); }
-        else if (code === 'ArrowLeft' || code === 'KeyA') {
-            customChar.useCustomColor = true;
-            const k = ['r','g','b'][ccStatIdx % 3];
-            customChar.customColor[k] = Math.max(0, customChar.customColor[k] - 10);
-            customChar.customDark[k] = Math.max(0, Math.floor(customChar.customColor[k] * 0.6));
-        } else if (code === 'ArrowRight' || code === 'KeyD') {
-            customChar.useCustomColor = true;
-            const k = ['r','g','b'][ccStatIdx % 3];
-            customChar.customColor[k] = Math.min(255, customChar.customColor[k] + 10);
-            customChar.customDark[k] = Math.max(0, Math.floor(customChar.customColor[k] * 0.6));
-        } else if (code === 'Tab' || code === 'KeyQ' || code === 'KeyE') {
-            ccStatIdx = (ccStatIdx + 1) % 3;
-            sounds.menu_select();
-        }
+        else if (code === 'ArrowLeft' || code === 'KeyA') { customChar.useCustomColor = true; const k = ['r','g','b'][ccStatIdx % 3]; customChar.customColor[k] = Math.max(0, customChar.customColor[k] - 10); customChar.customDark[k] = Math.max(0, Math.floor(customChar.customColor[k] * 0.6)); }
+        else if (code === 'ArrowRight' || code === 'KeyD') { customChar.useCustomColor = true; const k = ['r','g','b'][ccStatIdx % 3]; customChar.customColor[k] = Math.min(255, customChar.customColor[k] + 10); customChar.customDark[k] = Math.max(0, Math.floor(customChar.customColor[k] * 0.6)); }
+        else if (code === 'Tab' || code === 'KeyQ' || code === 'KeyE') { ccStatIdx = (ccStatIdx + 1) % 3; sounds.menu_select(); }
     } else if (ccSection === 3) {
         if (code === 'ArrowUp' || code === 'KeyW') { ccSection = 2; sounds.menu_select(); }
         else if (code === 'ArrowDown' || code === 'KeyS') { ccSection = 4; sounds.menu_select(); }
-        else if (code === 'ArrowLeft' || code === 'KeyA') {
-            customChar.sizeIdx = (customChar.sizeIdx - 1 + SIZE_OPTIONS.length) % SIZE_OPTIONS.length;
-            sounds.menu_select();
-        } else if (code === 'ArrowRight' || code === 'KeyD') {
-            customChar.sizeIdx = (customChar.sizeIdx + 1) % SIZE_OPTIONS.length;
-            sounds.menu_select();
-        }
+        else if (code === 'ArrowLeft' || code === 'KeyA') { customChar.sizeIdx = (customChar.sizeIdx - 1 + SIZE_OPTIONS.length) % SIZE_OPTIONS.length; sounds.menu_select(); }
+        else if (code === 'ArrowRight' || code === 'KeyD') { customChar.sizeIdx = (customChar.sizeIdx + 1) % SIZE_OPTIONS.length; sounds.menu_select(); }
     } else if (ccSection === 4) {
-        if (code === 'ArrowUp' || code === 'KeyW') {
-            if (ccStatIdx > 0) ccStatIdx--;
-            else ccSection = 3;
-            sounds.menu_select();
-        } else if (code === 'ArrowDown' || code === 'KeyS') {
-            if (ccStatIdx < 3) ccStatIdx++;
-            else ccSection = 5;
-            sounds.menu_select();
-        } else if (code === 'ArrowLeft' || code === 'KeyA') {
-            const statKey = ['health', 'speed', 'damage', 'jump'][ccStatIdx];
-            if (customChar.stats[statKey] > STAT_CONFIG[statKey].min) {
-                customChar.stats[statKey]--;
-                sounds.menu_select();
-            }
-        } else if (code === 'ArrowRight' || code === 'KeyD') {
-            const statKey = ['health', 'speed', 'damage', 'jump'][ccStatIdx];
-            const totalUsed = Object.values(customChar.stats).reduce((a, b) => a + b, 0);
-            if (customChar.stats[statKey] < STAT_CONFIG[statKey].max && totalUsed < STAT_POINTS_TOTAL) {
-                customChar.stats[statKey]++;
-                sounds.menu_select();
-            }
-        }
+        if (code === 'ArrowUp' || code === 'KeyW') { if (ccStatIdx > 0) ccStatIdx--; else ccSection = 3; sounds.menu_select(); }
+        else if (code === 'ArrowDown' || code === 'KeyS') { if (ccStatIdx < 3) ccStatIdx++; else ccSection = 5; sounds.menu_select(); }
+        else if (code === 'ArrowLeft' || code === 'KeyA') { const statKey = ['health', 'speed', 'damage', 'jump'][ccStatIdx]; if (customChar.stats[statKey] > STAT_CONFIG[statKey].min) { customChar.stats[statKey]--; sounds.menu_select(); } }
+        else if (code === 'ArrowRight' || code === 'KeyD') { const statKey = ['health', 'speed', 'damage', 'jump'][ccStatIdx]; const totalUsed = Object.values(customChar.stats).reduce((a, b) => a + b, 0); if (customChar.stats[statKey] < STAT_CONFIG[statKey].max && totalUsed < STAT_POINTS_TOTAL) { customChar.stats[statKey]++; sounds.menu_select(); } }
     } else if (ccSection === 5) {
         if (code === 'ArrowUp' || code === 'KeyW') { ccSection = 4; sounds.menu_select(); }
-        else if (code === 'KeyF' || code === 'KeyK' || code === 'Enter' || code === 'Space') {
-            sounds.menu_confirm();
-            state = "select";
-        }
+        else if (code === 'KeyF' || code === 'KeyK' || code === 'Enter' || code === 'Space') { sounds.menu_confirm(); state = "select"; }
     }
 }
 
 function getCurrentColor() {
-    if (customChar.useCustomColor) {
-        return { color: rgb(customChar.customColor.r, customChar.customColor.g, customChar.customColor.b),
-                 dark: rgb(customChar.customDark.r, customChar.customDark.g, customChar.customDark.b) };
-    }
+    if (customChar.useCustomColor) return { color: rgb(customChar.customColor.r, customChar.customColor.g, customChar.customColor.b), dark: rgb(customChar.customDark.r, customChar.customDark.g, customChar.customDark.b) };
     return PRESET_COLORS[customChar.colorIdx];
 }
 
@@ -1034,13 +921,11 @@ function resetFighters() {
     cameraY=0;targetCameraY=0;comboTexts=[];
     asteroids=[];asteroidImpacts=[];asteroidWarnings=[];asteroidSpawnTimer=60;
     fighters=[];
-    
     const cc = getCurrentColor();
     const mods = getStatMultipliers();
     fighters.push(new Fighter(WIDTH*0.2, cc.color, cc.dark, 1,
         {left:'KeyA',right:'KeyD',jump:'KeyW',punch:'KeyF',kick:'KeyG',super:'Space',aerial:'KeyQ'},
         customChar.name, false, 0, mods));
-    
     let nc=0;if(gameMode==="1v1")nc=1;else if(gameMode==="1v2")nc=2;else if(gameMode==="1v3")nc=3;else if(gameMode==="multi")nc=1;
     const cpuConfigs=[{color:BLUE,dark:DARK_BLUE,name:"CPU 2"},{color:GREEN,dark:DARK_GREEN,name:"CPU 3"},{color:PURPLE,dark:DARK_PURPLE,name:"CPU 4"}];
     const sp=[WIDTH*0.8,WIDTH*0.35,WIDTH*0.65];
@@ -1063,11 +948,20 @@ function handleMenuInput(code) {
             state="char_create";
         }
     }
+    // --- NEW: Weapon select keyboard controls ---
     else if(state==="select"){
         if(!p1Ready){
             if(code==='KeyA')p1Idx=(p1Idx-1+WEAPON_CHOICES.length)%WEAPON_CHOICES.length;
             else if(code==='KeyD')p1Idx=(p1Idx+1)%WEAPON_CHOICES.length;
-            else if(code==='KeyF')p1Ready=true;
+            else if(code==='KeyF') { p1Ready = true; sounds.menu_confirm(); }
+        } else {
+            // When ready, Enter/Space/ESC can advance or go back
+            if(code==='Enter'||code==='Space'||code==='KeyF'){
+                advanceFromWeaponSelect();
+            } else if(code==='Escape'||code==='Backspace'){
+                p1Ready = false;
+                sounds.menu_select();
+            }
         }
     }
     else if(state==="world_select"&&!worldLocked){
@@ -1096,35 +990,24 @@ function drawCharCreator(ctx) {
     grad.addColorStop(1, rgb(60, 30, 90));
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, WIDTH, HEIGHT);
-    
     ctx.fillStyle = rgba(255, 255, 255, 0.3);
-    for (let i = 0; i < 50; i++) {
-        const sx = (i * 137) % WIDTH;
-        const sy = (i * 89) % HEIGHT;
-        ctx.beginPath(); ctx.arc(sx, sy, 1 + (i % 3) * 0.5, 0, Math.PI * 2); ctx.fill();
-    }
-    
+    for (let i = 0; i < 50; i++) { const sx = (i * 137) % WIDTH; const sy = (i * 89) % HEIGHT; ctx.beginPath(); ctx.arc(sx, sy, 1 + (i % 3) * 0.5, 0, Math.PI * 2); ctx.fill(); }
     ctx.fillStyle = YELLOW;
     ctx.font = `bold ${Math.min(48, WIDTH * 0.04)}px Arial`;
     ctx.textAlign = "center";
     ctx.fillText("CREATE YOUR FIGHTER", WIDTH / 2, 60);
-    
     const leftX = WIDTH * 0.05;
     const rightX = WIDTH * 0.5;
     const panelW = WIDTH * 0.42;
-    
-    // Preview panel
     ctx.fillStyle = rgba(0, 0, 0, 0.4);
     ctx.fillRect(leftX, 100, panelW, HEIGHT - 140);
     ctx.strokeStyle = YELLOW;
     ctx.lineWidth = 2;
     ctx.strokeRect(leftX, 100, panelW, HEIGHT - 140);
-    
     ctx.fillStyle = WHITE;
     ctx.font = "bold 22px Arial";
     ctx.textAlign = "center";
     ctx.fillText("PREVIEW", leftX + panelW / 2, 130);
-    
     ccPreviewAnim += 0.05;
     const cc = getCurrentColor();
     const mods = getStatMultipliers();
@@ -1132,21 +1015,17 @@ function drawCharCreator(ctx) {
     const previewCY = 100 + (HEIGHT - 140) * 0.55;
     const previewScale = Math.min(2.5, (HEIGHT - 200) / 180);
     const s = mods.sizeScale * previewScale;
-    
     ctx.fillStyle = rgb(110, 90, 70);
     ctx.fillRect(previewCX - 80, previewCY + 55 * s, 160, 12);
     ctx.fillStyle = rgb(80, 150, 80);
     ctx.fillRect(previewCX - 80, previewCY + 55 * s, 160, 4);
-    
     ctx.fillStyle = "rgba(180, 80, 255, 0.3)";
     ctx.beginPath(); ctx.ellipse(previewCX, previewCY - 20 * s, 50 * s, 70 * s, 0, 0, Math.PI * 2); ctx.fill();
-    
     const walk = Math.sin(ccPreviewAnim * 2) * 12 * s;
     const headR = 16 * s;
     const hipY = previewCY + 20 * s;
     const shoulderY = previewCY - 15 * s;
     const headY = shoulderY - headR - 4 * s;
-    
     ctx.strokeStyle = cc.color;
     ctx.lineWidth = 6 * s;
     ctx.beginPath();
@@ -1154,29 +1033,24 @@ function drawCharCreator(ctx) {
     ctx.moveTo(previewCX, hipY); ctx.lineTo(previewCX - 14 * s - walk, previewCY + 55 * s);
     ctx.moveTo(previewCX, hipY); ctx.lineTo(previewCX, shoulderY);
     ctx.stroke();
-    
     const armSwing = Math.sin(ccPreviewAnim * 2 + Math.PI) * 10 * s;
     ctx.lineWidth = 5 * s;
     ctx.beginPath();
     ctx.moveTo(previewCX, shoulderY); ctx.lineTo(previewCX + 14 * s + armSwing, shoulderY + 22 * s);
     ctx.moveTo(previewCX, shoulderY); ctx.lineTo(previewCX - 14 * s - armSwing, shoulderY + 22 * s);
     ctx.stroke();
-    
     ctx.fillStyle = cc.color;
     ctx.beginPath(); ctx.arc(previewCX, headY, headR, 0, Math.PI * 2); ctx.fill();
     ctx.strokeStyle = "black"; ctx.lineWidth = 2 * s; ctx.stroke();
     ctx.fillStyle = "black";
     ctx.beginPath(); ctx.arc(previewCX + 6 * s, headY - 2 * s, 2 * s, 0, Math.PI * 2); ctx.fill();
-    
     ctx.fillStyle = YELLOW;
     ctx.font = `bold ${Math.min(28, WIDTH * 0.025)}px Arial`;
     ctx.textAlign = "center";
     ctx.fillText(customChar.name, previewCX, previewCY - 90 * s);
-    
     ctx.fillStyle = WHITE;
     ctx.font = "16px Arial";
     ctx.fillText(`Size: ${SIZE_OPTIONS[customChar.sizeIdx].name} (${SIZE_OPTIONS[customChar.sizeIdx].desc})`, previewCX, previewCY + 90 * s);
-    
     ctx.font = "14px Arial";
     ctx.fillStyle = WHITE;
     const totalHP = Math.round(BASE_MAX_HEALTH * mods.health);
@@ -1184,18 +1058,13 @@ function drawCharCreator(ctx) {
     const totalDmg = (mods.damage * 100).toFixed(0);
     const totalJmp = (mods.jump * 100).toFixed(0);
     ctx.fillText(`❤️ HP: ${totalHP}   🏃 Speed: ${totalSpd}   ⚔️ Damage: ${totalDmg}%   🦘 Jump: ${totalJmp}%`, previewCX, previewCY + 115 * s);
-    
-    // Controls panel
     ctx.fillStyle = rgba(0, 0, 0, 0.4);
     ctx.fillRect(rightX, 100, panelW, HEIGHT - 140);
     ctx.strokeStyle = YELLOW;
     ctx.lineWidth = 2;
     ctx.strokeRect(rightX, 100, panelW, HEIGHT - 140);
-    
     let y = 130;
     const rowH = 50;
-    
-    // Section 0: Name
     const nameSelected = ccSection === 0;
     const nameHover = mouseX >= rightX + 20 && mouseX <= rightX + panelW - 20 && mouseY >= y && mouseY <= y + rowH;
     ctx.fillStyle = nameSelected ? rgba(240, 200, 40, 0.2) : (nameHover ? rgba(255, 255, 255, 0.1) : rgba(255, 255, 255, 0.05));
@@ -1211,8 +1080,6 @@ function drawCharCreator(ctx) {
     const nameText = customChar.name + (nameSelected && Math.floor(Date.now() / 500) % 2 === 0 ? "_" : "");
     ctx.fillText(nameText, rightX + panelW - 35, y + 32);
     y += rowH + 10;
-    
-    // Section 1: Color presets
     const colorSelected = ccSection === 1;
     const colorHover = mouseX >= rightX + 20 && mouseX <= rightX + panelW - 20 && mouseY >= y && mouseY <= y + rowH + 30;
     ctx.fillStyle = colorSelected ? rgba(240, 200, 40, 0.2) : (colorHover ? rgba(255, 255, 255, 0.1) : rgba(255, 255, 255, 0.05));
@@ -1229,24 +1096,13 @@ function drawCharCreator(ctx) {
         const sx = swatchStartX + i * (swatchSize + 6);
         ctx.fillStyle = PRESET_COLORS[i].color;
         ctx.fillRect(sx, swatchY, swatchSize, swatchSize);
-        if (i === customChar.colorIdx && !customChar.useCustomColor) {
-            ctx.strokeStyle = YELLOW;
-            ctx.lineWidth = 3;
-            ctx.strokeRect(sx - 2, swatchY - 2, swatchSize + 4, swatchSize + 4);
-        }
-        // Hover effect
-        if (mouseX >= sx && mouseX <= sx + swatchSize && mouseY >= swatchY && mouseY <= swatchY + swatchSize) {
-            ctx.strokeStyle = WHITE;
-            ctx.lineWidth = 2;
-            ctx.strokeRect(sx, swatchY, swatchSize, swatchSize);
-        }
+        if (i === customChar.colorIdx && !customChar.useCustomColor) { ctx.strokeStyle = YELLOW; ctx.lineWidth = 3; ctx.strokeRect(sx - 2, swatchY - 2, swatchSize + 4, swatchSize + 4); }
+        if (mouseX >= sx && mouseX <= sx + swatchSize && mouseY >= swatchY && mouseY <= swatchY + swatchSize) { ctx.strokeStyle = WHITE; ctx.lineWidth = 2; ctx.strokeRect(sx, swatchY, swatchSize, swatchSize); }
         ctx.strokeStyle = BLACK;
         ctx.lineWidth = 1;
         ctx.strokeRect(sx, swatchY, swatchSize, swatchSize);
     }
     y += rowH + 40;
-    
-    // Section 2: RGB sliders
     const rgbSelected = ccSection === 2;
     const rgbHover = mouseX >= rightX + 20 && mouseX <= rightX + panelW - 20 && mouseY >= y && mouseY <= y + rowH + 50;
     ctx.fillStyle = rgbSelected ? rgba(240, 200, 40, 0.2) : (rgbHover ? rgba(255, 255, 255, 0.1) : rgba(255, 255, 255, 0.05));
@@ -1281,8 +1137,6 @@ function drawCharCreator(ctx) {
         ctx.fillText(customChar.customColor[k], barX + barW + 30, barY + 11);
     }
     y += rowH + 60;
-    
-    // Section 3: Size
     const sizeSelected = ccSection === 3;
     const sizeHover = mouseX >= rightX + 20 && mouseX <= rightX + panelW - 20 && mouseY >= y && mouseY <= y + rowH;
     ctx.fillStyle = sizeSelected ? rgba(240, 200, 40, 0.2) : (sizeHover ? rgba(255, 255, 255, 0.1) : rgba(255, 255, 255, 0.05));
@@ -1292,15 +1146,11 @@ function drawCharCreator(ctx) {
     ctx.font = "bold 18px Arial";
     ctx.textAlign = "left";
     ctx.fillText("📏 SIZE:", rightX + 35, y + 32);
-    
-    // Draw clickable arrows
     const leftArrowX = rightX + panelW - 150;
     const rightArrowX = rightX + panelW - 100;
     const arrowY = y + 10;
     const arrowW = 40;
     const arrowH = 30;
-    
-    // Left arrow
     const leftArrowHover = mouseX >= leftArrowX && mouseX <= leftArrowX + arrowW && mouseY >= arrowY && mouseY <= arrowY + arrowH;
     ctx.fillStyle = leftArrowHover ? rgba(240, 200, 40, 0.4) : rgba(255, 255, 255, 0.1);
     ctx.fillRect(leftArrowX, arrowY, arrowW, arrowH);
@@ -1311,8 +1161,6 @@ function drawCharCreator(ctx) {
     ctx.font = "bold 20px Arial";
     ctx.textAlign = "center";
     ctx.fillText("<", leftArrowX + arrowW/2, arrowY + 22);
-    
-    // Right arrow
     const rightArrowHover = mouseX >= rightArrowX && mouseX <= rightArrowX + arrowW && mouseY >= arrowY && mouseY <= arrowY + arrowH;
     ctx.fillStyle = rightArrowHover ? rgba(240, 200, 40, 0.4) : rgba(255, 255, 255, 0.1);
     ctx.fillRect(rightArrowX, arrowY, arrowW, arrowH);
@@ -1321,15 +1169,11 @@ function drawCharCreator(ctx) {
     ctx.strokeRect(rightArrowX, arrowY, arrowW, arrowH);
     ctx.fillStyle = WHITE;
     ctx.fillText(">", rightArrowX + arrowW/2, arrowY + 22);
-    
-    // Size name (clickable)
     ctx.fillStyle = WHITE;
     ctx.font = "bold 20px Arial";
     ctx.textAlign = "center";
     ctx.fillText(SIZE_OPTIONS[customChar.sizeIdx].name.toUpperCase(), rightX + panelW/2 - 20, y + 32);
     y += rowH + 10;
-    
-    // Section 4: Stats
     const statSelected = ccSection === 4;
     const statHover = mouseX >= rightX + 20 && mouseX <= rightX + panelW - 20 && mouseY >= y && mouseY <= y + rowH * 2 + 30;
     ctx.fillStyle = statSelected ? rgba(240, 200, 40, 0.2) : (statHover ? rgba(255, 255, 255, 0.1) : rgba(255, 255, 255, 0.05));
@@ -1367,8 +1211,6 @@ function drawCharCreator(ctx) {
         ctx.fillText(`${customChar.stats[k]}/${cfg.max}`, rightX + panelW - 35, sy + 13);
     }
     y += rowH * 2 + 40;
-    
-    // Section 5: Confirm
     const confirmSelected = ccSection === 5;
     const confirmHover = mouseX >= rightX + 20 && mouseX <= rightX + panelW - 20 && mouseY >= y && mouseY <= y + rowH + 10;
     ctx.fillStyle = confirmHover ? rgba(80, 200, 80, 0.6) : (confirmSelected ? rgba(80, 200, 80, 0.4) : rgba(255, 255, 255, 0.1));
@@ -1380,8 +1222,6 @@ function drawCharCreator(ctx) {
     ctx.font = `bold ${confirmHover ? 26 : 22}px Arial`;
     ctx.textAlign = "center";
     ctx.fillText("✓ CONFIRM CHARACTER ✓", rightX + panelW / 2, y + 38);
-    
-    // Instructions
     ctx.fillStyle = GRAY;
     ctx.font = "14px Arial";
     ctx.textAlign = "center";
@@ -1394,7 +1234,7 @@ function drawHUD(c){const bw=Math.min(280,WIDTH*0.22),bh=22;const pos=[{x:20,y:2
 
 function update() {
     if(state==="mode_select"||state==="char_create")return;
-    if(state==="select"){if(p1Ready){selectConfirmTimer++;if(selectConfirmTimer>45){selectConfirmTimer=0;worldLocked=false;worldConfirmTimer=0;state="world_select";}}return;}
+    if(state==="select")return; // Removed auto-advance - now requires START button click
     if(state==="world_select"){if(worldLocked){worldConfirmTimer++;if(worldConfirmTimer>45){resetFighters();gameOver=false;winner=null;spawnTimer=WEAPON_SPAWN_INTERVAL;armorSpawnTimer=ARMOR_SPAWN_INTERVAL;fireballSpawnTimer=Math.random()*(FIREBALL_SPAWN_MAX-FIREBALL_SPAWN_MIN)+FIREBALL_SPAWN_MIN;worldConfirmTimer=0;state="playing";}}return;}
     if(!gameOver){
         for(let i=0;i<fighters.length;i++){if(fighters[i].isAI)updateAIFor(fighters[i],i-1);}
@@ -1450,6 +1290,8 @@ function draw() {
         return;
     }
     if(state==="char_create"){drawCharCreator(ctx);return;}
+    
+    // --- WEAPON SELECT SCREEN WITH START BUTTON ---
     if(state==="select"){
         ctx.fillStyle=rgb(20,20,20);ctx.fillRect(0,0,WIDTH,HEIGHT);
         ctx.fillStyle=WHITE;ctx.font=`bold ${Math.min(32,WIDTH*0.03)}px Arial`;ctx.textAlign="center";
@@ -1465,11 +1307,108 @@ function draw() {
             ctx.fillText(WEAPON_CHOICES[i]?WEAPON_CHOICES[i].charAt(0).toUpperCase()+WEAPON_CHOICES[i].slice(1):"Fists",cx,200);
             if(i===p1Idx){ctx.fillStyle=RED;ctx.fillText("P1",cx,140);}
         }
-        ctx.fillStyle=p1Ready?GREEN:RED;ctx.fillText(`Player 1: ${p1Ready?"READY!":"Click a weapon or A/D + F"}`,WIDTH/2,300);
+        
+        // Status text
+        ctx.fillStyle=p1Ready?GREEN:RED;
+        ctx.font=`bold ${Math.min(22,WIDTH*0.02)}px Arial`;
+        ctx.fillText(`Player 1: ${p1Ready?"✓ READY!":"Click a weapon or press A/D + F"}`,WIDTH/2,280);
+        
+        // Character info
         ctx.fillStyle=PURPLE;ctx.font="bold 18px Arial";
-        ctx.fillText(`Playing as: ${customChar.name} (${SIZE_OPTIONS[customChar.sizeIdx].name})`,WIDTH/2,340);
+        ctx.fillText(`Playing as: ${customChar.name} (${SIZE_OPTIONS[customChar.sizeIdx].name})`,WIDTH/2,320);
+        
+        // --- NEW: BIG START BUTTON ---
+        const btn = getStartButtonRect();
+        const btnHover = isStartButtonHovered();
+        
+        if (p1Ready) {
+            // Pulsing green button when ready
+            const pulse = 0.7 + 0.3 * Math.sin(Date.now() * 0.008);
+            const glowSize = btnHover ? 15 : 8;
+            
+            // Glow effect
+            ctx.shadowColor = GREEN;
+            ctx.shadowBlur = glowSize * pulse;
+            
+            // Button background
+            const grad = ctx.createLinearGradient(btn.x, btn.y, btn.x, btn.y + btn.h);
+            if (btnHover) {
+                grad.addColorStop(0, rgb(100, 240, 120));
+                grad.addColorStop(1, rgb(40, 180, 70));
+            } else {
+                grad.addColorStop(0, rgb(80, 220, 100));
+                grad.addColorStop(1, rgb(30, 160, 60));
+            }
+            ctx.fillStyle = grad;
+            
+            // Rounded rectangle
+            const radius = 15;
+            ctx.beginPath();
+            ctx.moveTo(btn.x + radius, btn.y);
+            ctx.lineTo(btn.x + btn.w - radius, btn.y);
+            ctx.quadraticCurveTo(btn.x + btn.w, btn.y, btn.x + btn.w, btn.y + radius);
+            ctx.lineTo(btn.x + btn.w, btn.y + btn.h - radius);
+            ctx.quadraticCurveTo(btn.x + btn.w, btn.y + btn.h, btn.x + btn.w - radius, btn.y + btn.h);
+            ctx.lineTo(btn.x + radius, btn.y + btn.h);
+            ctx.quadraticCurveTo(btn.x, btn.y + btn.h, btn.x, btn.y + btn.h - radius);
+            ctx.lineTo(btn.x, btn.y + radius);
+            ctx.quadraticCurveTo(btn.x, btn.y, btn.x + radius, btn.y);
+            ctx.closePath();
+            ctx.fill();
+            
+            // Border
+            ctx.strokeStyle = btnHover ? WHITE : rgb(200, 255, 200);
+            ctx.lineWidth = btnHover ? 4 : 3;
+            ctx.stroke();
+            
+            ctx.shadowBlur = 0;
+            
+            // Text
+            ctx.fillStyle = WHITE;
+            ctx.font = `bold ${Math.min(36, WIDTH * 0.03)}px Arial`;
+            ctx.textAlign = "center";
+            ctx.fillText("▶ START GAME ▶", btn.x + btn.w/2, btn.y + btn.h/2 + 10);
+            
+            // Subtitle
+            ctx.fillStyle = rgba(255, 255, 255, 0.8);
+            ctx.font = "14px Arial";
+            ctx.fillText("Click here or press ENTER", btn.x + btn.w/2, btn.y + btn.h + 25);
+        } else {
+            // Disabled gray button when not ready
+            ctx.fillStyle = rgb(60, 60, 60);
+            const radius = 15;
+            ctx.beginPath();
+            ctx.moveTo(btn.x + radius, btn.y);
+            ctx.lineTo(btn.x + btn.w - radius, btn.y);
+            ctx.quadraticCurveTo(btn.x + btn.w, btn.y, btn.x + btn.w, btn.y + radius);
+            ctx.lineTo(btn.x + btn.w, btn.y + btn.h - radius);
+            ctx.quadraticCurveTo(btn.x + btn.w, btn.y + btn.h, btn.x + btn.w - radius, btn.y + btn.h);
+            ctx.lineTo(btn.x + radius, btn.y + btn.h);
+            ctx.quadraticCurveTo(btn.x, btn.y + btn.h, btn.x, btn.y + btn.h - radius);
+            ctx.lineTo(btn.x, btn.y + radius);
+            ctx.quadraticCurveTo(btn.x, btn.y, btn.x + radius, btn.y);
+            ctx.closePath();
+            ctx.fill();
+            
+            ctx.strokeStyle = GRAY;
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            
+            ctx.fillStyle = rgb(140, 140, 140);
+            ctx.font = `bold ${Math.min(32, WIDTH * 0.028)}px Arial`;
+            ctx.textAlign = "center";
+            ctx.fillText("🔒 SELECT A WEAPON FIRST", btn.x + btn.w/2, btn.y + btn.h/2 + 10);
+        }
+        
+        // Back hint
+        if (p1Ready) {
+            ctx.fillStyle = GRAY;
+            ctx.font = "13px Arial";
+            ctx.fillText("Press ESC or Backspace to change weapon", WIDTH/2, HEIGHT - 20);
+        }
         return;
     }
+    
     if(state==="world_select"){
         drawBackground(ctx,STAGES[stageIdx]);
         ctx.fillStyle=rgba(0,0,0,0.7);ctx.fillRect(0,0,WIDTH,HEIGHT);
@@ -1477,21 +1416,16 @@ function draw() {
         ctx.fillText("CHOOSE YOUR WORLD",WIDTH/2,80);
         ctx.fillStyle=YELLOW;ctx.font=`bold ${Math.min(24,WIDTH*0.025)}px Arial`;
         ctx.fillText(STAGES[stageIdx].name,WIDTH/2,140);
-        
-        // Left arrow
         const leftHover=mouseX>=WIDTH/2-120&&mouseX<=WIDTH/2-60&&mouseY>=120&&mouseY<=160;
         ctx.fillStyle=leftHover?rgba(255,255,255,0.3):rgba(255,255,255,0.1);
         ctx.fillRect(WIDTH/2-120,120,60,40);
         ctx.strokeStyle=leftHover?WHITE:GRAY;ctx.lineWidth=2;ctx.strokeRect(WIDTH/2-120,120,60,40);
         ctx.fillStyle=WHITE;ctx.font="bold 32px Arial";ctx.fillText("<",WIDTH/2-90,150);
-        
-        // Right arrow
         const rightHover=mouseX>=WIDTH/2+60&&mouseX<=WIDTH/2+120&&mouseY>=120&&mouseY<=160;
         ctx.fillStyle=rightHover?rgba(255,255,255,0.3):rgba(255,255,255,0.1);
         ctx.fillRect(WIDTH/2+60,120,60,40);
         ctx.strokeStyle=rightHover?WHITE:GRAY;ctx.lineWidth=2;ctx.strokeRect(WIDTH/2+60,120,60,40);
         ctx.fillStyle=WHITE;ctx.fillText(">",WIDTH/2+90,150);
-        
         const confirmHover=mouseY>=280&&mouseY<=340;
         ctx.fillStyle=worldLocked?GREEN:(confirmHover?rgba(80,200,80,0.6):rgba(80,200,80,0.3));
         ctx.font=`bold ${Math.min(28,WIDTH*0.022)}px Arial`;
