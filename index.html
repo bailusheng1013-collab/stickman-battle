@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Stickman Battle - Fixed Weapon Select!</title>
+<title>Stickman Battle - Character Creator!</title>
 <style>
     body { margin: 0; overflow: hidden; background: #1a1a1a; font-family: Arial, sans-serif; color: white; }
     canvas { display: block; background: #000; }
@@ -57,6 +57,9 @@ const YELLOW = rgb(240, 200, 40);
 const GRAY = rgb(120, 120, 120), BROWN = rgb(120, 80, 40), SILVER = rgb(200, 205, 210);
 const TOXIC_GREEN = rgb(120, 220, 80);
 const COMBO_ORANGE = rgb(255, 140, 40);
+const ORANGE = rgb(255, 140, 40);
+const CYAN = rgb(80, 200, 230);
+const PINK = rgb(255, 120, 180);
 
 const BASE_GRAVITY = 0.8, BASE_JUMP_STRENGTH = -15, BASE_MOVE_SPEED = 5, BASE_MAX_HEALTH = 100;
 const BASE_PUNCH_DAMAGE = 8, BASE_KICK_DAMAGE = 14;
@@ -73,6 +76,7 @@ const LAVA_RISE_INTERVAL = 600, LAVA_RISE_AMOUNT = 25, MIN_PLATFORM_Y = 80;
 let TARGET_PLATFORM_COUNT = Math.max(15, Math.floor(WIDTH / 120));
 let MAX_PLATFORMS = Math.max(25, Math.floor(WIDTH / 80));
 const HAZARD_DAMAGE = 40, HAZARD_STUN = 24, RELOAD_TIME = 60;
+const SLIME_BOUNCE_FACTOR = 0.88, SLIME_MIN_BOUNCE_VEL = 4;
 const PUNCH_RANGE = 70, PUNCH_COOLDOWN = 25;
 const KICK_RANGE = 90, KICK_COOLDOWN = 45, HIT_STUN = 12;
 const MAX_WEAPONS_ON_FIELD = 4, MAX_ARMOR_ON_FIELD = 3;
@@ -122,7 +126,8 @@ let customChar = {
     customDark: { r: 150, g: 30, b: 30 },
     useCustomColor: false,
     sizeIdx: 1,
-    stats: { health: 5, speed: 5, damage: 5, jump: 5 }
+    stats: { health: 5, speed: 5, damage: 5, jump: 5 },
+    rgbSlider: 0
 };
 
 const WEAPON_TYPES = {
@@ -147,7 +152,8 @@ const STAGES = [
     { name: "Desert", sky_top: rgb(250, 200, 120), sky_bottom: rgb(255, 235, 190), ground: rgb(200, 165, 100), ground_edge: rgb(225, 195, 130), decor: "desert" },
     { name: "Night City", sky_top: rgb(20, 20, 45), sky_bottom: rgb(60, 50, 90), ground: rgb(40, 40, 50), ground_edge: rgb(90, 90, 110), decor: "city" },
     { name: "Volcano", sky_top: rgb(60, 20, 15), sky_bottom: rgb(150, 60, 30), ground: rgb(50, 35, 30), ground_edge: rgb(200, 80, 30), decor: "volcano" },
-    { name: "Snow Peak", sky_top: rgb(180, 210, 235), sky_bottom: rgb(235, 240, 245), ground: rgb(225, 235, 240), ground_edge: rgb(255, 255, 255), decor: "snow" }
+    { name: "Snow Peak", sky_top: rgb(180, 210, 235), sky_bottom: rgb(235, 240, 245), ground: rgb(225, 235, 240), ground_edge: rgb(255, 255, 255), decor: "snow" },
+    { name: "Slime World", sky_top: rgb(190, 245, 170), sky_bottom: rgb(230, 250, 210), ground: rgb(90, 200, 100), ground_edge: rgb(150, 240, 130), decor: "slime", bouncy: true, hazard_color: rgb(40, 90, 35), hazard_bubble_color: rgb(140, 230, 100) }
 ];
 
 const WEAPON_CHOICES = [null, "uzi", "sword", "bat", "spear", "bow", "gatling", "bomb", "nuke"];
@@ -220,20 +226,16 @@ const sounds = {
         playNoise(dur, vol); playTone(60, dur, 'sine', vol * 0.8);
         if (size === 'large') playTone(40, 0.8, 'sawtooth', 0.3);
     },
+    slime_bounce: () => { playTone(320, 0.09, 'sine', 0.15); setTimeout(() => playTone(520, 0.08, 'sine', 0.12), 40); },
     menu_select: () => playTone(600, 0.08, 'sine', 0.1),
-    menu_confirm: () => { playTone(800, 0.1, 'sine', 0.12); setTimeout(() => playTone(1000, 0.1, 'sine', 0.12), 80); },
-    start_game: () => {
-        playTone(600, 0.1, 'square', 0.15);
-        setTimeout(() => playTone(800, 0.1, 'square', 0.15), 100);
-        setTimeout(() => playTone(1000, 0.15, 'square', 0.15), 200);
-    }
+    menu_confirm: () => { playTone(800, 0.1, 'sine', 0.12); setTimeout(() => playTone(1000, 0.1, 'sine', 0.12), 80); }
 };
 
 let state = "mode_select";
 let gameMode = "1v1";
 let modeIdx = 0;
 let wins = [0, 0, 0, 0];
-let p1Idx = 0, p1Ready = false;
+let p1Idx = 0, p1Ready = false, selectConfirmTimer = 0;
 let stageIdx = 0, worldLocked = false, worldConfirmTimer = 0;
 let currentLavaY = GROUND_Y, lavaRiseTimer = LAVA_RISE_INTERVAL, lavaRiseWarning = 0;
 let cameraY = 0, targetCameraY = 0;
@@ -250,282 +252,54 @@ let fighters = [];
 let comboTexts = [];
 let asteroids = [], asteroidImpacts = [], asteroidWarnings = [], asteroidSpawnTimer = 60;
 
+// --- NEW: R PRESS DOUBLE-CLICK TRACKING ---
 let lastRPressTime = 0;
-const R_DOUBLE_PRESS_WINDOW = 1000;
+const R_DOUBLE_PRESS_WINDOW = 1000; // 1 second window for double press
 
 let ccSection = 0;
 let ccStatIdx = 0;
 let ccNameCursor = 0;
 let ccPreviewAnim = 0;
-let nameInputFocused = false;
-
-let mouseX = 0, mouseY = 0;
-let mouseDragging = false;
-let dragTarget = null;
 
 const keys = {};
 const aiKeysPool = [{}, {}, {}];
 
-canvas.addEventListener('mousemove', (e) => {
-    const rect = canvas.getBoundingClientRect();
-    mouseX = e.clientX - rect.left;
-    mouseY = e.clientY - rect.top;
-    updateCursor();
-    if (mouseDragging && dragTarget) handleDrag(mouseX, mouseY);
+window.addEventListener('keydown', e => {
+    keys[e.code] = true;
+    handleMenuInput(e.code);
+    handleCharCreateInput(e.code);
 });
+window.addEventListener('keyup', e => { keys[e.code] = false; });
 
-canvas.addEventListener('mousedown', (e) => {
-    const rect = canvas.getBoundingClientRect();
-    mouseX = e.clientX - rect.left;
-    mouseY = e.clientY - rect.top;
-    mouseDragging = true;
-    handleClick(mouseX, mouseY);
-});
-
-canvas.addEventListener('mouseup', () => { mouseDragging = false; dragTarget = null; });
-canvas.addEventListener('mouseleave', () => { mouseDragging = false; dragTarget = null; });
-
-function handleDrag(x, y) {
-    if (state !== "char_create") return;
-    const rightX = WIDTH * 0.5;
-    const panelW = WIDTH * 0.42;
-    if (dragTarget && dragTarget.startsWith('rgb_')) {
-        const channel = dragTarget.split('_')[1];
-        const barX = rightX + 35;
-        const barW = panelW - 100;
-        const val = Math.max(0, Math.min(1, (x - barX) / barW));
-        customChar.useCustomColor = true;
-        customChar.customColor[channel] = Math.round(val * 255);
-        customChar.customDark[channel] = Math.max(0, Math.floor(customChar.customColor[channel] * 0.6));
-    }
-    if (dragTarget && dragTarget.startsWith('stat_')) {
-        const statKey = dragTarget.split('_')[1];
-        const cfg = STAT_CONFIG[statKey];
-        const barX = rightX + 140;
-        const barW = panelW - 220;
-        const val = Math.max(0, Math.min(1, (x - barX) / barW));
-        const targetVal = Math.round(val * cfg.max);
-        const currentVal = customChar.stats[statKey];
-        const totalUsed = Object.values(customChar.stats).reduce((a, b) => a + b, 0);
-        const diff = targetVal - currentVal;
-        if (diff > 0 && totalUsed + diff <= STAT_POINTS_TOTAL && targetVal <= cfg.max) customChar.stats[statKey] = targetVal;
-        else if (diff < 0 && targetVal >= cfg.min) customChar.stats[statKey] = targetVal;
-    }
+function rectIntersect(r1, r2) {
+    return !(r2.x > r1.x + r1.w || r2.x + r2.w < r1.x || r2.y > r1.y + r1.h || r2.y + r2.h < r1.y);
 }
-
-function updateCursor() {
-    let isClickable = false;
-    if (state === "mode_select") {
-        const bw = Math.min(450, WIDTH * 0.35), bh = 70, sy = HEIGHT * 0.32;
-        for (let i = 0; i < MODE_CHOICES.length; i++) {
-            const y = sy + i * (bh + 20);
-            if (mouseX >= WIDTH / 2 - bw / 2 && mouseX <= WIDTH / 2 + bw / 2 && mouseY >= y && mouseY <= y + bh) { isClickable = true; break; }
-        }
-    } else if (state === "char_create") {
-        const rightX = WIDTH * 0.5, panelW = WIDTH * 0.42;
-        let y = 130; const rowH = 50;
-        if (mouseX >= rightX + 20 && mouseX <= rightX + panelW - 20 && mouseY >= y && mouseY <= y + rowH) isClickable = true;
-        y += rowH + 10;
-        if (mouseX >= rightX + 20 && mouseX <= rightX + panelW - 20 && mouseY >= y && mouseY <= y + rowH + 30) isClickable = true;
-        y += rowH + 40;
-        if (mouseX >= rightX + 20 && mouseX <= rightX + panelW - 20 && mouseY >= y && mouseY <= y + rowH + 50) isClickable = true;
-        y += rowH + 60;
-        if (mouseX >= rightX + 20 && mouseX <= rightX + panelW - 20 && mouseY >= y && mouseY <= y + rowH) isClickable = true;
-        y += rowH + 10;
-        if (mouseX >= rightX + 20 && mouseX <= rightX + panelW - 20 && mouseY >= y && mouseY <= y + rowH * 2 + 30) isClickable = true;
-        y += rowH * 2 + 40;
-        if (mouseX >= rightX + 20 && mouseX <= rightX + panelW - 20 && mouseY >= y && mouseY <= y + rowH + 10) isClickable = true;
-    } else if (state === "select") {
-        const cw = Math.min(100, (WIDTH - 60) / WEAPON_CHOICES.length);
-        const sx = WIDTH / 2 - (WEAPON_CHOICES.length * cw) / 2 + cw / 2;
-        for (let i = 0; i < WEAPON_CHOICES.length; i++) {
-            const cx = sx + i * cw;
-            if (mouseX >= cx - 40 && mouseX <= cx + 40 && mouseY >= 150 && mouseY <= 230) { isClickable = true; break; }
-        }
-        if (p1Ready && isStartButtonHovered()) isClickable = true;
-    } else if (state === "world_select") {
-        if (mouseX >= WIDTH / 2 - 120 && mouseX <= WIDTH / 2 - 60 && mouseY >= 120 && mouseY <= 160) isClickable = true;
-        else if (mouseX >= WIDTH / 2 + 60 && mouseX <= WIDTH / 2 + 120 && mouseY >= 120 && mouseY <= 160) isClickable = true;
-        else if (mouseY >= 280 && mouseY <= 340) isClickable = true;
-    } else if (state === "over") {
-        isClickable = true;
-    }
-    canvas.style.cursor = isClickable ? 'pointer' : 'default';
-}
-
-function getStartButtonRect() {
-    const btnW = Math.min(300, WIDTH * 0.25);
-    const btnH = 70;
-    return { x: WIDTH / 2 - btnW / 2, y: HEIGHT - 140, w: btnW, h: btnH };
-}
-
-function isStartButtonHovered() {
-    const btn = getStartButtonRect();
-    return mouseX >= btn.x && mouseX <= btn.x + btn.w && mouseY >= btn.y && mouseY <= btn.y + btn.h;
-}
-
-function handleClick(x, y) {
-    if (state === "mode_select") {
-        const bw = Math.min(450, WIDTH * 0.35), bh = 70, sy = HEIGHT * 0.32;
-        for (let i = 0; i < MODE_CHOICES.length; i++) {
-            const y = sy + i * (bh + 20);
-            if (x >= WIDTH / 2 - bw / 2 && x <= WIDTH / 2 + bw / 2 && y >= sy + i * (bh + 20) && y <= sy + i * (bh + 20) + bh) {
-                modeIdx = i;
-                gameMode = ["1v1", "1v2", "1v3", "multi"][i];
-                sounds.menu_confirm();
-                state = "char_create";
-                break;
-            }
-        }
-    } else if (state === "char_create") {
-        handleCharCreatorClick(x, y);
-    } else if (state === "select") {
-        // --- FIXED: Check weapon boxes first ---
-        const cw = Math.min(100, (WIDTH - 60) / WEAPON_CHOICES.length);
-        const sx = WIDTH / 2 - (WEAPON_CHOICES.length * cw) / 2 + cw / 2;
-        for (let i = 0; i < WEAPON_CHOICES.length; i++) {
-            const cx = sx + i * cw;
-            if (x >= cx - 40 && x <= cx + 40 && y >= 150 && y <= 230) {
-                // --- FIX: Select AND confirm weapon instantly ---
-                p1Idx = i;
-                p1Ready = true;
-                sounds.menu_confirm();
-                return;
-            }
-        }
-        // Then check START button
-        if (p1Ready) {
-            const btn = getStartButtonRect();
-            if (x >= btn.x && x <= btn.x + btn.w && y >= btn.y && y <= btn.y + btn.h) {
-                advanceFromWeaponSelect();
-            }
-        }
-    } else if (state === "world_select") {
-        if (x >= WIDTH / 2 - 120 && x <= WIDTH / 2 - 60 && y >= 120 && y <= 160) {
-            stageIdx = (stageIdx - 1 + STAGES.length) % STAGES.length;
-            sounds.menu_select();
-        } else if (x >= WIDTH / 2 + 60 && x <= WIDTH / 2 + 120 && y >= 120 && y <= 160) {
-            stageIdx = (stageIdx + 1) % STAGES.length;
-            sounds.menu_select();
-        } else if (y >= 280 && y <= 340) {
-            worldLocked = true;
-            sounds.menu_confirm();
-        }
-    } else if (state === "over") {
-        const now = Date.now();
-        if (now - lastRPressTime < R_DOUBLE_PRESS_WINDOW) {
-            state = "mode_select";
-            p1Idx = 0;
-            p1Ready = false;
-            sounds.menu_confirm();
-        } else {
-            state = "char_create";
-            sounds.menu_select();
-        }
-        lastRPressTime = now;
-    }
-}
-
-function advanceFromWeaponSelect() {
-    sounds.start_game();
-    worldLocked = false;
-    worldConfirmTimer = 0;
-    state = "world_select";
-}
-
-function handleCharCreatorClick(x, y) {
-    const rightX = WIDTH * 0.5;
-    const panelW = WIDTH * 0.42;
-    let sectionY = 130;
-    const rowH = 50;
-    
-    if (x >= rightX + 20 && x <= rightX + panelW - 20 && y >= sectionY && y <= sectionY + rowH) {
-        ccSection = 0; nameInputFocused = true; sounds.menu_select(); return;
-    }
-    sectionY += rowH + 10;
-    
-    if (x >= rightX + 20 && x <= rightX + panelW - 20 && y >= sectionY && y <= sectionY + rowH + 30) {
-        ccSection = 1; nameInputFocused = false;
-        const swatchSize = 28, swatchStartX = rightX + 35, swatchY = sectionY + 40;
-        for (let i = 0; i < PRESET_COLORS.length; i++) {
-            const sx = swatchStartX + i * (swatchSize + 6);
-            if (x >= sx && x <= sx + swatchSize && y >= swatchY && y <= swatchY + swatchSize) {
-                customChar.colorIdx = i; customChar.useCustomColor = false; sounds.menu_select(); break;
-            }
-        }
-        return;
-    }
-    sectionY += rowH + 40;
-    
-    if (x >= rightX + 20 && x <= rightX + panelW - 20 && y >= sectionY && y <= sectionY + rowH + 50) {
-        ccSection = 2; nameInputFocused = false;
-        for (let i = 0; i < 3; i++) {
-            const barX = rightX + 35, barY = sectionY + 40 + i * 20, barW = panelW - 100, barH = 14;
-            if (x >= barX && x <= barX + barW && y >= barY - 5 && y <= barY + barH + 5) {
-                ccStatIdx = i; customChar.useCustomColor = true;
-                const k = ['r', 'g', 'b'][i];
-                const val = Math.max(0, Math.min(1, (x - barX) / barW));
-                customChar.customColor[k] = Math.round(val * 255);
-                customChar.customDark[k] = Math.max(0, Math.floor(customChar.customColor[k] * 0.6));
-                mouseDragging = true; dragTarget = 'rgb_' + k;
-                sounds.menu_select(); break;
-            }
-        }
-        return;
-    }
-    sectionY += rowH + 60;
-    
-    if (x >= rightX + 20 && x <= rightX + panelW - 20 && y >= sectionY && y <= sectionY + rowH) {
-        ccSection = 3; nameInputFocused = false;
-        if (x >= rightX + panelW - 150 && x <= rightX + panelW - 110) {
-            customChar.sizeIdx = (customChar.sizeIdx - 1 + SIZE_OPTIONS.length) % SIZE_OPTIONS.length; sounds.menu_select();
-        } else if (x >= rightX + panelW - 100 && x <= rightX + panelW - 60) {
-            customChar.sizeIdx = (customChar.sizeIdx + 1) % SIZE_OPTIONS.length; sounds.menu_select();
-        } else if (x >= rightX + 150 && x <= rightX + panelW - 160) {
-            customChar.sizeIdx = (customChar.sizeIdx + 1) % SIZE_OPTIONS.length; sounds.menu_select();
-        }
-        return;
-    }
-    sectionY += rowH + 10;
-    
-    if (x >= rightX + 20 && x <= rightX + panelW - 20 && y >= sectionY && y <= sectionY + rowH * 2 + 30) {
-        ccSection = 4; nameInputFocused = false;
-        const statKeys = ['health', 'speed', 'damage', 'jump'];
-        for (let i = 0; i < 4; i++) {
-            const barX = rightX + 140, barW = panelW - 220, barH = 16, sy = sectionY + 40 + i * 28;
-            if (x >= barX - 5 && x <= barX + barW + 5 && y >= sy - 5 && y <= sy + barH + 5) {
-                ccStatIdx = i;
-                const k = statKeys[i]; const cfg = STAT_CONFIG[k];
-                const val = Math.max(0, Math.min(1, (x - barX) / barW));
-                const targetVal = Math.round(val * cfg.max);
-                const currentVal = customChar.stats[k];
-                const totalUsed = Object.values(customChar.stats).reduce((a, b) => a + b, 0);
-                const diff = targetVal - currentVal;
-                if (diff > 0 && totalUsed + diff <= STAT_POINTS_TOTAL && targetVal <= cfg.max) customChar.stats[k] = targetVal;
-                else if (diff < 0 && targetVal >= cfg.min) customChar.stats[k] = targetVal;
-                mouseDragging = true; dragTarget = 'stat_' + k;
-                sounds.menu_select(); break;
-            }
-        }
-        return;
-    }
-    sectionY += rowH * 2 + 40;
-    
-    if (x >= rightX + 20 && x <= rightX + panelW - 20 && y >= sectionY && y <= sectionY + rowH + 10) {
-        nameInputFocused = false; sounds.menu_confirm(); state = "select"; return;
-    }
-    nameInputFocused = false;
+function worldToScreen(worldY) { return worldY - cameraY; }
+function isBouncyStage() { return !!(STAGES[stageIdx] && STAGES[stageIdx].bouncy); }
+function triggerScreenShake(intensity, duration) { screenShakeIntensity = intensity; screenShakeDuration = duration; }
+function updateScreenShake() {
+    if (screenShakeDuration > 0) {
+        screenShakeX = (Math.random() * 2 - 1) * screenShakeIntensity;
+        screenShakeY = (Math.random() * 2 - 1) * screenShakeIntensity;
+        screenShakeDuration--;
+    } else { screenShakeX = 0; screenShakeY = 0; }
 }
 
 function handleCharCreateInput(code) {
     if (state !== "char_create") return;
+    
     if (ccSection === 0) {
-        if (code === 'ArrowDown' || code === 'KeyS') { ccSection = 1; nameInputFocused = false; sounds.menu_select(); }
-        else if (code === 'Backspace') { if (customChar.name.length > 0 && ccNameCursor > 0) { customChar.name = customChar.name.slice(0, ccNameCursor - 1) + customChar.name.slice(ccNameCursor); ccNameCursor--; } }
-        else if (code === 'ArrowLeft' || code === 'KeyA') { if (ccNameCursor > 0) ccNameCursor--; }
-        else if (code === 'ArrowRight' || code === 'KeyD') { if (ccNameCursor < customChar.name.length) ccNameCursor++; }
-        else if (code === 'Enter') { ccSection = 1; nameInputFocused = false; sounds.menu_select(); }
-        else if (code.startsWith('Key') && code.length === 4 && customChar.name.length < 12) {
+        if (code === 'ArrowDown' || code === 'KeyS') { ccSection = 1; sounds.menu_select(); }
+        else if (code === 'Backspace') {
+            if (customChar.name.length > 0 && ccNameCursor > 0) {
+                customChar.name = customChar.name.slice(0, ccNameCursor - 1) + customChar.name.slice(ccNameCursor);
+                ccNameCursor--;
+            }
+        } else if (code === 'ArrowLeft' || code === 'KeyA') {
+            if (ccNameCursor > 0) ccNameCursor--;
+        } else if (code === 'ArrowRight' || code === 'KeyD') {
+            if (ccNameCursor < customChar.name.length) ccNameCursor++;
+        } else if (code.startsWith('Key') && code.length === 4 && customChar.name.length < 12) {
             const char = code.charAt(3);
             customChar.name = customChar.name.slice(0, ccNameCursor) + char + customChar.name.slice(ccNameCursor);
             ccNameCursor++;
@@ -533,32 +307,79 @@ function handleCharCreateInput(code) {
     } else if (ccSection === 1) {
         if (code === 'ArrowUp' || code === 'KeyW') { ccSection = 0; sounds.menu_select(); }
         else if (code === 'ArrowDown' || code === 'KeyS') { ccSection = 2; sounds.menu_select(); }
-        else if (code === 'ArrowLeft' || code === 'KeyA') { customChar.colorIdx = (customChar.colorIdx - 1 + PRESET_COLORS.length) % PRESET_COLORS.length; customChar.useCustomColor = false; sounds.menu_select(); }
-        else if (code === 'ArrowRight' || code === 'KeyD') { customChar.colorIdx = (customChar.colorIdx + 1) % PRESET_COLORS.length; customChar.useCustomColor = false; sounds.menu_select(); }
+        else if (code === 'ArrowLeft' || code === 'KeyA') {
+            customChar.colorIdx = (customChar.colorIdx - 1 + PRESET_COLORS.length) % PRESET_COLORS.length;
+            customChar.useCustomColor = false;
+            sounds.menu_select();
+        } else if (code === 'ArrowRight' || code === 'KeyD') {
+            customChar.colorIdx = (customChar.colorIdx + 1) % PRESET_COLORS.length;
+            customChar.useCustomColor = false;
+            sounds.menu_select();
+        }
     } else if (ccSection === 2) {
         if (code === 'ArrowUp' || code === 'KeyW') { ccSection = 1; sounds.menu_select(); }
         else if (code === 'ArrowDown' || code === 'KeyS') { ccSection = 3; sounds.menu_select(); }
-        else if (code === 'ArrowLeft' || code === 'KeyA') { customChar.useCustomColor = true; const k = ['r','g','b'][ccStatIdx % 3]; customChar.customColor[k] = Math.max(0, customChar.customColor[k] - 10); customChar.customDark[k] = Math.max(0, Math.floor(customChar.customColor[k] * 0.6)); }
-        else if (code === 'ArrowRight' || code === 'KeyD') { customChar.useCustomColor = true; const k = ['r','g','b'][ccStatIdx % 3]; customChar.customColor[k] = Math.min(255, customChar.customColor[k] + 10); customChar.customDark[k] = Math.max(0, Math.floor(customChar.customColor[k] * 0.6)); }
-        else if (code === 'Tab' || code === 'KeyQ' || code === 'KeyE') { ccStatIdx = (ccStatIdx + 1) % 3; sounds.menu_select(); }
+        else if (code === 'ArrowLeft' || code === 'KeyA') {
+            customChar.useCustomColor = true;
+            const k = ['r','g','b'][ccStatIdx % 3];
+            customChar.customColor[k] = Math.max(0, customChar.customColor[k] - 10);
+            customChar.customDark[k] = Math.max(0, Math.floor(customChar.customColor[k] * 0.6));
+        } else if (code === 'ArrowRight' || code === 'KeyD') {
+            customChar.useCustomColor = true;
+            const k = ['r','g','b'][ccStatIdx % 3];
+            customChar.customColor[k] = Math.min(255, customChar.customColor[k] + 10);
+            customChar.customDark[k] = Math.max(0, Math.floor(customChar.customColor[k] * 0.6));
+        } else if (code === 'Tab' || code === 'KeyQ' || code === 'KeyE') {
+            ccStatIdx = (ccStatIdx + 1) % 3;
+            sounds.menu_select();
+        }
     } else if (ccSection === 3) {
         if (code === 'ArrowUp' || code === 'KeyW') { ccSection = 2; sounds.menu_select(); }
         else if (code === 'ArrowDown' || code === 'KeyS') { ccSection = 4; sounds.menu_select(); }
-        else if (code === 'ArrowLeft' || code === 'KeyA') { customChar.sizeIdx = (customChar.sizeIdx - 1 + SIZE_OPTIONS.length) % SIZE_OPTIONS.length; sounds.menu_select(); }
-        else if (code === 'ArrowRight' || code === 'KeyD') { customChar.sizeIdx = (customChar.sizeIdx + 1) % SIZE_OPTIONS.length; sounds.menu_select(); }
+        else if (code === 'ArrowLeft' || code === 'KeyA') {
+            customChar.sizeIdx = (customChar.sizeIdx - 1 + SIZE_OPTIONS.length) % SIZE_OPTIONS.length;
+            sounds.menu_select();
+        } else if (code === 'ArrowRight' || code === 'KeyD') {
+            customChar.sizeIdx = (customChar.sizeIdx + 1) % SIZE_OPTIONS.length;
+            sounds.menu_select();
+        }
     } else if (ccSection === 4) {
-        if (code === 'ArrowUp' || code === 'KeyW') { if (ccStatIdx > 0) ccStatIdx--; else ccSection = 3; sounds.menu_select(); }
-        else if (code === 'ArrowDown' || code === 'KeyS') { if (ccStatIdx < 3) ccStatIdx++; else ccSection = 5; sounds.menu_select(); }
-        else if (code === 'ArrowLeft' || code === 'KeyA') { const statKey = ['health', 'speed', 'damage', 'jump'][ccStatIdx]; if (customChar.stats[statKey] > STAT_CONFIG[statKey].min) { customChar.stats[statKey]--; sounds.menu_select(); } }
-        else if (code === 'ArrowRight' || code === 'KeyD') { const statKey = ['health', 'speed', 'damage', 'jump'][ccStatIdx]; const totalUsed = Object.values(customChar.stats).reduce((a, b) => a + b, 0); if (customChar.stats[statKey] < STAT_CONFIG[statKey].max && totalUsed < STAT_POINTS_TOTAL) { customChar.stats[statKey]++; sounds.menu_select(); } }
+        if (code === 'ArrowUp' || code === 'KeyW') {
+            if (ccStatIdx > 0) ccStatIdx--;
+            else ccSection = 3;
+            sounds.menu_select();
+        } else if (code === 'ArrowDown' || code === 'KeyS') {
+            if (ccStatIdx < 3) ccStatIdx++;
+            else ccSection = 5;
+            sounds.menu_select();
+        } else if (code === 'ArrowLeft' || code === 'KeyA') {
+            const statKey = ['health', 'speed', 'damage', 'jump'][ccStatIdx];
+            if (customChar.stats[statKey] > STAT_CONFIG[statKey].min) {
+                customChar.stats[statKey]--;
+                sounds.menu_select();
+            }
+        } else if (code === 'ArrowRight' || code === 'KeyD') {
+            const statKey = ['health', 'speed', 'damage', 'jump'][ccStatIdx];
+            const totalUsed = Object.values(customChar.stats).reduce((a, b) => a + b, 0);
+            if (customChar.stats[statKey] < STAT_CONFIG[statKey].max && totalUsed < STAT_POINTS_TOTAL) {
+                customChar.stats[statKey]++;
+                sounds.menu_select();
+            }
+        }
     } else if (ccSection === 5) {
         if (code === 'ArrowUp' || code === 'KeyW') { ccSection = 4; sounds.menu_select(); }
-        else if (code === 'KeyF' || code === 'KeyK' || code === 'Enter' || code === 'Space') { sounds.menu_confirm(); state = "select"; }
+        else if (code === 'KeyF' || code === 'KeyK' || code === 'Enter' || code === 'Space') {
+            sounds.menu_confirm();
+            state = "select";
+        }
     }
 }
 
 function getCurrentColor() {
-    if (customChar.useCustomColor) return { color: rgb(customChar.customColor.r, customChar.customColor.g, customChar.customColor.b), dark: rgb(customChar.customDark.r, customChar.customDark.g, customChar.customDark.b) };
+    if (customChar.useCustomColor) {
+        return { color: rgb(customChar.customColor.r, customChar.customColor.g, customChar.customColor.b),
+                 dark: rgb(customChar.customDark.r, customChar.customDark.g, customChar.customDark.b) };
+    }
     return PRESET_COLORS[customChar.colorIdx];
 }
 
@@ -752,6 +573,7 @@ class Fighter {
         this.aerial_combo_cd = 0; this.aerial_combo_timer = 0;
         this.aerial_combo_hits_landed = 0; this.aerial_combo_hit_flags = [false, false, false];
         this.combo_trail = []; this.firing_ray = false;
+        this.bounceCd = 0; this.bounceSquish = 0;
     }
     getRect() { return { x: this.x - this.width/2, y: this.y - this.height, w: this.width, h: this.height }; }
     getAerialComboHitbox() {
@@ -812,11 +634,34 @@ class Fighter {
     physics() {
         if (this.health <= 0) return;
         this.vel_y += BASE_GRAVITY; this.y += this.vel_y; this.on_ground = false;
-        for (const p of platforms) { const py=this.y-this.vel_y; if(py<=p.y&&this.y>=p.y&&p.x<=this.x&&this.x<=p.x+p.w&&this.vel_y>=0){this.y=p.y;this.vel_y=0;this.on_ground=true;break;} }
+        for (const p of platforms) {
+            const py=this.y-this.vel_y;
+            if(py<=p.y&&this.y>=p.y&&p.x<=this.x&&this.x<=p.x+p.w&&this.vel_y>=0){
+                this.y=p.y;
+                if (isBouncyStage()) {
+                    const bounceVel = -this.vel_y * SLIME_BOUNCE_FACTOR;
+                    if (bounceVel < -SLIME_MIN_BOUNCE_VEL) {
+                        this.vel_y = Math.max(bounceVel, BASE_JUMP_STRENGTH * 1.7 * this.statMods.jump);
+                        this.on_ground = false;
+                        this.bounceSquish = 8;
+                        if (this.bounceCd <= 0) { sounds.slime_bounce(); this.bounceCd = 8; }
+                    } else {
+                        this.vel_y = 0;
+                        this.on_ground = true;
+                    }
+                } else {
+                    this.vel_y = 0;
+                    this.on_ground = true;
+                }
+                break;
+            }
+        }
         if (this.on_ground && this.aerial_combo_timer > 0) { this.aerial_combo_timer=0; this.attack_type=null; this.attack_anim=0; this.combo_trail=[]; }
         if (!this.on_ground && this.y >= currentLavaY) this.hazardHit();
         if (this.punch_cd > 0) this.punch_cd--;
         if (this.kick_cd > 0) this.kick_cd--;
+        if (this.bounceCd > 0) this.bounceCd--;
+        if (this.bounceSquish > 0) this.bounceSquish--;
         if (this.aerial_combo_cd > 0) this.aerial_combo_cd--;
         if (this.aerial_combo_timer > 0) {
             this.aerial_combo_timer--;
@@ -872,6 +717,12 @@ class Fighter {
             ctx.fillStyle=color;ctx.beginPath();ctx.arc(0,-30*s,headR,0,Math.PI*2);ctx.fill();ctx.strokeStyle="black";ctx.lineWidth=2*s;ctx.stroke();ctx.restore();
             return;
         }
+        const squishT = this.bounceSquish > 0 ? this.bounceSquish / 8 : 0;
+        const sqY = 1 - squishT * 0.28, sqX = 1 + squishT * 0.18;
+        ctx.save();
+        ctx.translate(cx, sy);
+        ctx.scale(sqX, sqY);
+        ctx.translate(-cx, -sy);
         const swing = this.moving ? Math.sin(this.walk_cycle)*18*s : 0;
         const ls = this.on_ground ? 14*s : 8*s;
         let flx=cx+ls+swing, blx=cx-ls-swing, fly=sy, bly=sy;
@@ -888,11 +739,12 @@ class Fighter {
         ctx.fillStyle=color;ctx.beginPath();ctx.arc(cx,headY,headR,0,Math.PI*2);ctx.fill();ctx.strokeStyle="black";ctx.lineWidth=2*s;ctx.stroke();
         ctx.fillStyle="black";ctx.beginPath();ctx.arc(cx+this.facing*6*s,headY-2*s,2*s,0,Math.PI*2);ctx.fill();
         if(this.weapon&&this.attack_type!=="super_ray"){const i=WEAPON_TYPES[this.weapon.type];ctx.strokeStyle=i.color;ctx.lineWidth=(this.weapon.type==="uzi"||this.weapon.type==="gatling"?8:5)*s;ctx.beginPath();if(this.attack_type==="weapon"){ctx.moveTo(fhx,fhy);ctx.lineTo(cx+this.facing*i.reach*s,shoulderY+10*s);}else{ctx.moveTo(fhx,fhy);ctx.lineTo(fhx+this.facing*25*s,fhy);}ctx.stroke();}
+        ctx.restore();
     }
 }
 
 class Arrow { constructor(x,y,f,d,o,s,k){this.x=x;this.y=y;this.facing=f;this.damage=d;this.owner=o;this.kind=k;this.speed=s||15;this.length=k==="arrow"?34:16;this.dead=false;} update(){this.x+=this.speed*this.facing;if(this.x<-50||this.x>WIDTH+50)this.dead=true;} getRect(){const f=this.x+this.facing*this.length;return{x:Math.min(this.x,f),y:this.y-(this.kind==="arrow"?4:3),w:this.length,h:this.kind==="arrow"?8:6};} draw(c){const sy=worldToScreen(this.y);if(sy<-50||sy>HEIGHT+50)return;c.strokeStyle=this.kind==="bullet"?rgb(255,210,90):rgb(80,50,20);c.lineWidth=3;c.beginPath();c.moveTo(this.x,sy);c.lineTo(this.x+this.facing*this.length,sy);c.stroke();} }
-class Bomb { constructor(x,y,f,d,o,n=false){this.x=x;this.y=y;this.vel_x=f*(n?7:9);this.vel_y=n?-8:-11;this.damage=d;this.owner=o;this.isNuke=n;this.timer=n?90:70;this.dead=false;this.exploded=false;this.life=0;} update(){if(this.exploded)return;this.life++;this.vel_y+=BASE_GRAVITY*(this.isNuke?0.3:1);this.x+=this.vel_x;this.y+=this.vel_y;this.timer--;for(const p of platforms){if(p.x<=this.x&&this.x<=p.x+p.w&&this.y>=p.y&&this.vel_y>=0){if(this.y-this.vel_y<=p.y+10){this.y=p.y;this.vel_y=0;this.vel_x*=this.isNuke?0.5:0.7;this.timer-=this.isNuke?5:3;}}}if(this.y>=currentLavaY||this.timer<=0){this.exploded=true;this.dead=true;}} explode(){if(this.isNuke){sounds.nuke_explosion();triggerScreenShake(20,60);return[new NukeExplosion(this.x,this.y,this.damage,this.owner),new RadiationCloud(this.x,this.y)];}else{sounds.explosion();return new Explosion(this.x,this.y,this.damage,this.owner);}} draw(c){const sy=worldToScreen(this.y);if(sy<-50||sy>HEIGHT+50)return;c.fillStyle=this.isNuke?rgb(180,40,40):rgb(30,30,30);c.beginPath();c.arc(this.x,sy,this.isNuke?12:8,0,Math.PI*2);c.fill();if(this.timer%8<4){c.fillStyle=rgb(255,200,50);c.beginPath();c.arc(this.x+this.vel_x*0.4,sy-9,3,0,Math.PI*2);c.fill();}} }
+class Bomb { constructor(x,y,f,d,o,n=false){this.x=x;this.y=y;this.vel_x=f*(n?7:9);this.vel_y=n?-8:-11;this.damage=d;this.owner=o;this.isNuke=n;this.timer=n?90:70;this.dead=false;this.exploded=false;this.life=0;} update(){if(this.exploded)return;this.life++;this.vel_y+=BASE_GRAVITY*(this.isNuke?0.3:1);this.x+=this.vel_x;this.y+=this.vel_y;this.timer--;for(const p of platforms){if(p.x<=this.x&&this.x<=p.x+p.w&&this.y>=p.y&&this.vel_y>=0){if(this.y-this.vel_y<=p.y+10){this.y=p.y;if(isBouncyStage()){this.vel_y=-Math.abs(this.vel_y)*0.78;this.vel_x*=0.97;this.timer-=this.isNuke?2:1;}else{this.vel_y=0;this.vel_x*=this.isNuke?0.5:0.7;this.timer-=this.isNuke?5:3;}}}}if(this.y>=currentLavaY||this.timer<=0){this.exploded=true;this.dead=true;}} explode(){if(this.isNuke){sounds.nuke_explosion();triggerScreenShake(20,60);return[new NukeExplosion(this.x,this.y,this.damage,this.owner),new RadiationCloud(this.x,this.y)];}else{sounds.explosion();return new Explosion(this.x,this.y,this.damage,this.owner);}} draw(c){const sy=worldToScreen(this.y);if(sy<-50||sy>HEIGHT+50)return;c.fillStyle=this.isNuke?rgb(180,40,40):rgb(30,30,30);c.beginPath();c.arc(this.x,sy,this.isNuke?12:8,0,Math.PI*2);c.fill();if(this.timer%8<4){c.fillStyle=rgb(255,200,50);c.beginPath();c.arc(this.x+this.vel_x*0.4,sy-9,3,0,Math.PI*2);c.fill();}} }
 class Nuke extends Bomb { constructor(x,y,f,d,o){super(x,y,f,d,o,true);} }
 class Explosion { constructor(x,y,d,o,n=false){this.x=x;this.y=y;this.damage=d;this.owner=o;this.isNuke=n;this.radius=10;this.max_radius=n?NUKE_IMPACT_RADIUS:110;this.life=n?60:20;this.has_damaged=false;this.has_destroyed_platforms=false;this.mushroom_stem_height=0;this.mushroom_cap_radius=0;} update(){this.life--;if(this.life>(this.isNuke?40:10))this.radius+=(this.max_radius-this.radius)*(this.isNuke?0.25:0.4);else this.radius+=(this.max_radius-this.radius)*(this.isNuke?0.08:0.1);if(this.isNuke&&this.life>30){this.mushroom_stem_height=Math.min(200,this.mushroom_stem_height+8);this.mushroom_cap_radius=Math.min(80,this.mushroom_cap_radius+3);}if(!this.has_damaged&&this.life===(this.isNuke?59:19)){for(const t of fighters){if(t.health<=0)continue;const d=Math.hypot(t.x-this.x,(t.y-t.height/2)-this.y);if(d<this.max_radius){const fl=this.x<t.x;t.takeHit(this.damage*(this.owner?this.owner.statMods.damage:1),fl);const df=1-(d/this.max_radius);t.x=Math.max(t.width,Math.min(WIDTH-t.width,t.x+(fl?(this.isNuke?NUKE_KNOCKBACK:120):-(this.isNuke?NUKE_KNOCKBACK:120))*df));t.vel_y=(this.isNuke?NUKE_POP:-22)*df;}}this.has_damaged=true;}if(!this.has_destroyed_platforms&&this.life===(this.isNuke?55:17)){const td=[];for(const p of platforms){const cx=Math.max(p.x,Math.min(this.x,p.x+p.w));const cy=Math.max(p.y,Math.min(this.y,p.y+p.h));if(Math.hypot(cx-this.x,cy-this.y)<this.max_radius*(this.isNuke?0.8:1))td.push(p);}if(platforms.length-td.length>=(this.isNuke?2:1)){for(const p of td){for(let i=0;i<(this.isNuke?25:18);i++)debris.push(new Debris(p.x+Math.random()*p.w,p.y+Math.random()*p.h,rgb(110,90,70)));const idx=platforms.indexOf(p);if(idx>-1)platforms.splice(idx,1);}sounds.crumble();}this.has_destroyed_platforms=true;}} draw(c){if(this.life<=0)return;const sy=worldToScreen(this.y);if(sy<-this.max_radius||sy>HEIGHT+this.max_radius)return;const a=this.life/(this.isNuke?60:20);if(this.isNuke&&this.mushroom_stem_height>0){c.fillStyle=rgba(180,120,60,a*0.7);c.fillRect(this.x-30,sy-this.mushroom_stem_height,60,this.mushroom_stem_height);c.fillStyle=rgba(240,180,100,a*0.6);c.beginPath();c.ellipse(this.x,sy-this.mushroom_stem_height-this.mushroom_cap_radius,this.mushroom_cap_radius*1.5,this.mushroom_cap_radius,0,0,Math.PI*2);c.fill();}c.fillStyle=rgba(255,100,30,a*0.9);c.beginPath();c.arc(this.x,sy,this.radius,0,Math.PI*2);c.fill();c.fillStyle=rgba(255,200,50,a*0.85);c.beginPath();c.arc(this.x,sy,this.radius*0.7,0,Math.PI*2);c.fill();c.fillStyle=rgba(255,255,220,a*0.95);c.beginPath();c.arc(this.x,sy,this.radius*0.4,0,Math.PI*2);c.fill();} }
 class NukeExplosion extends Explosion { constructor(x,y,d,o){super(x,y,d,o,true);} }
@@ -917,11 +769,13 @@ function resetFighters() {
     cameraY=0;targetCameraY=0;comboTexts=[];
     asteroids=[];asteroidImpacts=[];asteroidWarnings=[];asteroidSpawnTimer=60;
     fighters=[];
+    
     const cc = getCurrentColor();
     const mods = getStatMultipliers();
     fighters.push(new Fighter(WIDTH*0.2, cc.color, cc.dark, 1,
         {left:'KeyA',right:'KeyD',jump:'KeyW',punch:'KeyF',kick:'KeyG',super:'Space',aerial:'KeyQ'},
         customChar.name, false, 0, mods));
+    
     let nc=0;if(gameMode==="1v1")nc=1;else if(gameMode==="1v2")nc=2;else if(gameMode==="1v3")nc=3;else if(gameMode==="multi")nc=1;
     const cpuConfigs=[{color:BLUE,dark:DARK_BLUE,name:"CPU 2"},{color:GREEN,dark:DARK_GREEN,name:"CPU 3"},{color:PURPLE,dark:DARK_PURPLE,name:"CPU 4"}];
     const sp=[WIDTH*0.8,WIDTH*0.35,WIDTH*0.65];
@@ -934,7 +788,7 @@ function resetFighters() {
     for(let i=0;i<Math.min(2,fighters.length);i++)spawnArmor();
 }
 
-// --- FIXED: Full keyboard support for weapon select ---
+// --- UPDATED: R PRESS DOUBLE-CLICK HANDLER ---
 function handleMenuInput(code) {
     if(state==="mode_select"){
         if(code==='ArrowUp'||code==='KeyW')modeIdx=(modeIdx-1+MODE_CHOICES.length)%MODE_CHOICES.length;
@@ -945,32 +799,11 @@ function handleMenuInput(code) {
             state="char_create";
         }
     }
-    // --- FIXED: Weapon select with full keyboard support ---
     else if(state==="select"){
         if(!p1Ready){
-            // Browse weapons with A/D or Left/Right arrows
-            if(code==='KeyA'||code==='ArrowLeft'){
-                p1Idx=(p1Idx-1+WEAPON_CHOICES.length)%WEAPON_CHOICES.length;
-                sounds.menu_select();
-            }
-            else if(code==='KeyD'||code==='ArrowRight'){
-                p1Idx=(p1Idx+1)%WEAPON_CHOICES.length;
-                sounds.menu_select();
-            }
-            // Confirm weapon with F, Enter, or Space
-            else if(code==='KeyF'||code==='Enter'||code==='Space'){
-                p1Ready=true;
-                sounds.menu_confirm();
-            }
-        } else {
-            // Already ready - can start or go back
-            if(code==='Enter'||code==='Space'||code==='KeyF'){
-                advanceFromWeaponSelect();
-            } else if(code==='Escape'||code==='Backspace'||code==='KeyA'||code==='KeyD'||code==='ArrowLeft'||code==='ArrowRight'){
-                // Go back to change weapon
-                p1Ready = false;
-                sounds.menu_select();
-            }
+            if(code==='KeyA')p1Idx=(p1Idx-1+WEAPON_CHOICES.length)%WEAPON_CHOICES.length;
+            else if(code==='KeyD')p1Idx=(p1Idx+1)%WEAPON_CHOICES.length;
+            else if(code==='KeyF')p1Ready=true;
         }
     }
     else if(state==="world_select"&&!worldLocked){
@@ -978,14 +811,17 @@ function handleMenuInput(code) {
         else if(code==='KeyD'||code==='ArrowRight')stageIdx=(stageIdx+1)%STAGES.length;
         else if(code==='KeyF'||code==='KeyK'||code==='Enter'||code==='Space')worldLocked=true;
     }
+    // --- NEW: R PRESS DOUBLE-CLICK LOGIC ---
     else if(state==="over"&&code==='KeyR'){
         const now = Date.now();
         if (now - lastRPressTime < R_DOUBLE_PRESS_WINDOW) {
+            // Double press - go to mode select
             state = "mode_select";
             p1Idx = 0;
             p1Ready = false;
             sounds.menu_confirm();
         } else {
+            // Single press - go to character creator
             state = "char_create";
             sounds.menu_select();
         }
@@ -999,24 +835,34 @@ function drawCharCreator(ctx) {
     grad.addColorStop(1, rgb(60, 30, 90));
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, WIDTH, HEIGHT);
+    
     ctx.fillStyle = rgba(255, 255, 255, 0.3);
-    for (let i = 0; i < 50; i++) { const sx = (i * 137) % WIDTH; const sy = (i * 89) % HEIGHT; ctx.beginPath(); ctx.arc(sx, sy, 1 + (i % 3) * 0.5, 0, Math.PI * 2); ctx.fill(); }
+    for (let i = 0; i < 50; i++) {
+        const sx = (i * 137) % WIDTH;
+        const sy = (i * 89) % HEIGHT;
+        ctx.beginPath(); ctx.arc(sx, sy, 1 + (i % 3) * 0.5, 0, Math.PI * 2); ctx.fill();
+    }
+    
     ctx.fillStyle = YELLOW;
     ctx.font = `bold ${Math.min(48, WIDTH * 0.04)}px Arial`;
     ctx.textAlign = "center";
     ctx.fillText("CREATE YOUR FIGHTER", WIDTH / 2, 60);
+    
     const leftX = WIDTH * 0.05;
     const rightX = WIDTH * 0.5;
     const panelW = WIDTH * 0.42;
+    
     ctx.fillStyle = rgba(0, 0, 0, 0.4);
     ctx.fillRect(leftX, 100, panelW, HEIGHT - 140);
     ctx.strokeStyle = YELLOW;
     ctx.lineWidth = 2;
     ctx.strokeRect(leftX, 100, panelW, HEIGHT - 140);
+    
     ctx.fillStyle = WHITE;
     ctx.font = "bold 22px Arial";
     ctx.textAlign = "center";
     ctx.fillText("PREVIEW", leftX + panelW / 2, 130);
+    
     ccPreviewAnim += 0.05;
     const cc = getCurrentColor();
     const mods = getStatMultipliers();
@@ -1024,17 +870,21 @@ function drawCharCreator(ctx) {
     const previewCY = 100 + (HEIGHT - 140) * 0.55;
     const previewScale = Math.min(2.5, (HEIGHT - 200) / 180);
     const s = mods.sizeScale * previewScale;
+    
     ctx.fillStyle = rgb(110, 90, 70);
     ctx.fillRect(previewCX - 80, previewCY + 55 * s, 160, 12);
     ctx.fillStyle = rgb(80, 150, 80);
     ctx.fillRect(previewCX - 80, previewCY + 55 * s, 160, 4);
+    
     ctx.fillStyle = "rgba(180, 80, 255, 0.3)";
     ctx.beginPath(); ctx.ellipse(previewCX, previewCY - 20 * s, 50 * s, 70 * s, 0, 0, Math.PI * 2); ctx.fill();
+    
     const walk = Math.sin(ccPreviewAnim * 2) * 12 * s;
     const headR = 16 * s;
     const hipY = previewCY + 20 * s;
     const shoulderY = previewCY - 15 * s;
     const headY = shoulderY - headR - 4 * s;
+    
     ctx.strokeStyle = cc.color;
     ctx.lineWidth = 6 * s;
     ctx.beginPath();
@@ -1042,24 +892,29 @@ function drawCharCreator(ctx) {
     ctx.moveTo(previewCX, hipY); ctx.lineTo(previewCX - 14 * s - walk, previewCY + 55 * s);
     ctx.moveTo(previewCX, hipY); ctx.lineTo(previewCX, shoulderY);
     ctx.stroke();
+    
     const armSwing = Math.sin(ccPreviewAnim * 2 + Math.PI) * 10 * s;
     ctx.lineWidth = 5 * s;
     ctx.beginPath();
     ctx.moveTo(previewCX, shoulderY); ctx.lineTo(previewCX + 14 * s + armSwing, shoulderY + 22 * s);
     ctx.moveTo(previewCX, shoulderY); ctx.lineTo(previewCX - 14 * s - armSwing, shoulderY + 22 * s);
     ctx.stroke();
+    
     ctx.fillStyle = cc.color;
     ctx.beginPath(); ctx.arc(previewCX, headY, headR, 0, Math.PI * 2); ctx.fill();
     ctx.strokeStyle = "black"; ctx.lineWidth = 2 * s; ctx.stroke();
     ctx.fillStyle = "black";
     ctx.beginPath(); ctx.arc(previewCX + 6 * s, headY - 2 * s, 2 * s, 0, Math.PI * 2); ctx.fill();
+    
     ctx.fillStyle = YELLOW;
     ctx.font = `bold ${Math.min(28, WIDTH * 0.025)}px Arial`;
     ctx.textAlign = "center";
     ctx.fillText(customChar.name, previewCX, previewCY - 90 * s);
+    
     ctx.fillStyle = WHITE;
     ctx.font = "16px Arial";
     ctx.fillText(`Size: ${SIZE_OPTIONS[customChar.sizeIdx].name} (${SIZE_OPTIONS[customChar.sizeIdx].desc})`, previewCX, previewCY + 90 * s);
+    
     ctx.font = "14px Arial";
     ctx.fillStyle = WHITE;
     const totalHP = Math.round(BASE_MAX_HEALTH * mods.health);
@@ -1067,18 +922,20 @@ function drawCharCreator(ctx) {
     const totalDmg = (mods.damage * 100).toFixed(0);
     const totalJmp = (mods.jump * 100).toFixed(0);
     ctx.fillText(`❤️ HP: ${totalHP}   🏃 Speed: ${totalSpd}   ⚔️ Damage: ${totalDmg}%   🦘 Jump: ${totalJmp}%`, previewCX, previewCY + 115 * s);
+    
     ctx.fillStyle = rgba(0, 0, 0, 0.4);
     ctx.fillRect(rightX, 100, panelW, HEIGHT - 140);
     ctx.strokeStyle = YELLOW;
     ctx.lineWidth = 2;
     ctx.strokeRect(rightX, 100, panelW, HEIGHT - 140);
+    
     let y = 130;
     const rowH = 50;
+    
     const nameSelected = ccSection === 0;
-    const nameHover = mouseX >= rightX + 20 && mouseX <= rightX + panelW - 20 && mouseY >= y && mouseY <= y + rowH;
-    ctx.fillStyle = nameSelected ? rgba(240, 200, 40, 0.2) : (nameHover ? rgba(255, 255, 255, 0.1) : rgba(255, 255, 255, 0.05));
+    ctx.fillStyle = nameSelected ? rgba(240, 200, 40, 0.2) : rgba(255, 255, 255, 0.05);
     ctx.fillRect(rightX + 20, y, panelW - 40, rowH);
-    if (nameSelected || nameHover) { ctx.strokeStyle = nameSelected ? YELLOW : GRAY; ctx.lineWidth = nameSelected ? 3 : 2; ctx.strokeRect(rightX + 20, y, panelW - 40, rowH); }
+    if (nameSelected) { ctx.strokeStyle = YELLOW; ctx.lineWidth = 3; ctx.strokeRect(rightX + 20, y, panelW - 40, rowH); }
     ctx.fillStyle = nameSelected ? YELLOW : WHITE;
     ctx.font = "bold 18px Arial";
     ctx.textAlign = "left";
@@ -1089,11 +946,11 @@ function drawCharCreator(ctx) {
     const nameText = customChar.name + (nameSelected && Math.floor(Date.now() / 500) % 2 === 0 ? "_" : "");
     ctx.fillText(nameText, rightX + panelW - 35, y + 32);
     y += rowH + 10;
+    
     const colorSelected = ccSection === 1;
-    const colorHover = mouseX >= rightX + 20 && mouseX <= rightX + panelW - 20 && mouseY >= y && mouseY <= y + rowH + 30;
-    ctx.fillStyle = colorSelected ? rgba(240, 200, 40, 0.2) : (colorHover ? rgba(255, 255, 255, 0.1) : rgba(255, 255, 255, 0.05));
+    ctx.fillStyle = colorSelected ? rgba(240, 200, 40, 0.2) : rgba(255, 255, 255, 0.05);
     ctx.fillRect(rightX + 20, y, panelW - 40, rowH + 30);
-    if (colorSelected || colorHover) { ctx.strokeStyle = colorSelected ? YELLOW : GRAY; ctx.lineWidth = colorSelected ? 3 : 2; ctx.strokeRect(rightX + 20, y, panelW - 40, rowH + 30); }
+    if (colorSelected) { ctx.strokeStyle = YELLOW; ctx.lineWidth = 3; ctx.strokeRect(rightX + 20, y, panelW - 40, rowH + 30); }
     ctx.fillStyle = colorSelected ? YELLOW : WHITE;
     ctx.font = "bold 18px Arial";
     ctx.textAlign = "left";
@@ -1105,22 +962,25 @@ function drawCharCreator(ctx) {
         const sx = swatchStartX + i * (swatchSize + 6);
         ctx.fillStyle = PRESET_COLORS[i].color;
         ctx.fillRect(sx, swatchY, swatchSize, swatchSize);
-        if (i === customChar.colorIdx && !customChar.useCustomColor) { ctx.strokeStyle = YELLOW; ctx.lineWidth = 3; ctx.strokeRect(sx - 2, swatchY - 2, swatchSize + 4, swatchSize + 4); }
-        if (mouseX >= sx && mouseX <= sx + swatchSize && mouseY >= swatchY && mouseY <= swatchY + swatchSize) { ctx.strokeStyle = WHITE; ctx.lineWidth = 2; ctx.strokeRect(sx, swatchY, swatchSize, swatchSize); }
+        if (i === customChar.colorIdx && !customChar.useCustomColor) {
+            ctx.strokeStyle = YELLOW;
+            ctx.lineWidth = 3;
+            ctx.strokeRect(sx - 2, swatchY - 2, swatchSize + 4, swatchSize + 4);
+        }
         ctx.strokeStyle = BLACK;
         ctx.lineWidth = 1;
         ctx.strokeRect(sx, swatchY, swatchSize, swatchSize);
     }
     y += rowH + 40;
+    
     const rgbSelected = ccSection === 2;
-    const rgbHover = mouseX >= rightX + 20 && mouseX <= rightX + panelW - 20 && mouseY >= y && mouseY <= y + rowH + 50;
-    ctx.fillStyle = rgbSelected ? rgba(240, 200, 40, 0.2) : (rgbHover ? rgba(255, 255, 255, 0.1) : rgba(255, 255, 255, 0.05));
+    ctx.fillStyle = rgbSelected ? rgba(240, 200, 40, 0.2) : rgba(255, 255, 255, 0.05);
     ctx.fillRect(rightX + 20, y, panelW - 40, rowH + 50);
-    if (rgbSelected || rgbHover) { ctx.strokeStyle = rgbSelected ? YELLOW : GRAY; ctx.lineWidth = rgbSelected ? 3 : 2; ctx.strokeRect(rightX + 20, y, panelW - 40, rowH + 50); }
+    if (rgbSelected) { ctx.strokeStyle = YELLOW; ctx.lineWidth = 3; ctx.strokeRect(rightX + 20, y, panelW - 40, rowH + 50); }
     ctx.fillStyle = rgbSelected ? YELLOW : WHITE;
     ctx.font = "bold 18px Arial";
     ctx.textAlign = "left";
-    ctx.fillText("🎚️ CUSTOM RGB (click & drag):", rightX + 35, y + 25);
+    ctx.fillText("🎚️ CUSTOM RGB (Q/E switch):", rightX + 35, y + 25);
     const rgbLabels = ['R', 'G', 'B'];
     const rgbColors = [rgb(255, 80, 80), rgb(80, 255, 80), rgb(80, 80, 255)];
     for (let i = 0; i < 3; i++) {
@@ -1134,9 +994,8 @@ function drawCharCreator(ctx) {
         const val = customChar.customColor[k] / 255;
         ctx.fillStyle = rgbColors[i];
         ctx.fillRect(barX, barY, barW * val, barH);
-        const isHover = mouseX >= barX && mouseX <= barX + barW && mouseY >= barY && mouseY <= barY + barH;
-        ctx.strokeStyle = (rgbSelected && ccStatIdx === i) ? YELLOW : (isHover ? WHITE : GRAY);
-        ctx.lineWidth = (rgbSelected && ccStatIdx === i) ? 3 : (isHover ? 2 : 1);
+        ctx.strokeStyle = rgbSelected && ccStatIdx === i ? YELLOW : GRAY;
+        ctx.lineWidth = rgbSelected && ccStatIdx === i ? 3 : 1;
         ctx.strokeRect(barX, barY, barW, barH);
         ctx.fillStyle = WHITE;
         ctx.font = "bold 12px Arial";
@@ -1146,48 +1005,25 @@ function drawCharCreator(ctx) {
         ctx.fillText(customChar.customColor[k], barX + barW + 30, barY + 11);
     }
     y += rowH + 60;
+    
     const sizeSelected = ccSection === 3;
-    const sizeHover = mouseX >= rightX + 20 && mouseX <= rightX + panelW - 20 && mouseY >= y && mouseY <= y + rowH;
-    ctx.fillStyle = sizeSelected ? rgba(240, 200, 40, 0.2) : (sizeHover ? rgba(255, 255, 255, 0.1) : rgba(255, 255, 255, 0.05));
+    ctx.fillStyle = sizeSelected ? rgba(240, 200, 40, 0.2) : rgba(255, 255, 255, 0.05);
     ctx.fillRect(rightX + 20, y, panelW - 40, rowH);
-    if (sizeSelected || sizeHover) { ctx.strokeStyle = sizeSelected ? YELLOW : GRAY; ctx.lineWidth = sizeSelected ? 3 : 2; ctx.strokeRect(rightX + 20, y, panelW - 40, rowH); }
+    if (sizeSelected) { ctx.strokeStyle = YELLOW; ctx.lineWidth = 3; ctx.strokeRect(rightX + 20, y, panelW - 40, rowH); }
     ctx.fillStyle = sizeSelected ? YELLOW : WHITE;
     ctx.font = "bold 18px Arial";
     ctx.textAlign = "left";
     ctx.fillText("📏 SIZE:", rightX + 35, y + 32);
-    const leftArrowX = rightX + panelW - 150;
-    const rightArrowX = rightX + panelW - 100;
-    const arrowY = y + 10;
-    const arrowW = 40;
-    const arrowH = 30;
-    const leftArrowHover = mouseX >= leftArrowX && mouseX <= leftArrowX + arrowW && mouseY >= arrowY && mouseY <= arrowY + arrowH;
-    ctx.fillStyle = leftArrowHover ? rgba(240, 200, 40, 0.4) : rgba(255, 255, 255, 0.1);
-    ctx.fillRect(leftArrowX, arrowY, arrowW, arrowH);
-    ctx.strokeStyle = leftArrowHover ? YELLOW : GRAY;
-    ctx.lineWidth = 2;
-    ctx.strokeRect(leftArrowX, arrowY, arrowW, arrowH);
+    ctx.textAlign = "right";
     ctx.fillStyle = WHITE;
-    ctx.font = "bold 20px Arial";
-    ctx.textAlign = "center";
-    ctx.fillText("<", leftArrowX + arrowW/2, arrowY + 22);
-    const rightArrowHover = mouseX >= rightArrowX && mouseX <= rightArrowX + arrowW && mouseY >= arrowY && mouseY <= arrowY + arrowH;
-    ctx.fillStyle = rightArrowHover ? rgba(240, 200, 40, 0.4) : rgba(255, 255, 255, 0.1);
-    ctx.fillRect(rightArrowX, arrowY, arrowW, arrowH);
-    ctx.strokeStyle = rightArrowHover ? YELLOW : GRAY;
-    ctx.lineWidth = 2;
-    ctx.strokeRect(rightArrowX, arrowY, arrowW, arrowH);
-    ctx.fillStyle = WHITE;
-    ctx.fillText(">", rightArrowX + arrowW/2, arrowY + 22);
-    ctx.fillStyle = WHITE;
-    ctx.font = "bold 20px Arial";
-    ctx.textAlign = "center";
-    ctx.fillText(SIZE_OPTIONS[customChar.sizeIdx].name.toUpperCase(), rightX + panelW/2 - 20, y + 32);
+    ctx.font = "20px Arial";
+    ctx.fillText(`< ${SIZE_OPTIONS[customChar.sizeIdx].name.toUpperCase()} >`, rightX + panelW - 35, y + 32);
     y += rowH + 10;
+    
     const statSelected = ccSection === 4;
-    const statHover = mouseX >= rightX + 20 && mouseX <= rightX + panelW - 20 && mouseY >= y && mouseY <= y + rowH * 2 + 30;
-    ctx.fillStyle = statSelected ? rgba(240, 200, 40, 0.2) : (statHover ? rgba(255, 255, 255, 0.1) : rgba(255, 255, 255, 0.05));
+    ctx.fillStyle = statSelected ? rgba(240, 200, 40, 0.2) : rgba(255, 255, 255, 0.05);
     ctx.fillRect(rightX + 20, y, panelW - 40, rowH * 2 + 30);
-    if (statSelected || statHover) { ctx.strokeStyle = statSelected ? YELLOW : GRAY; ctx.lineWidth = statSelected ? 3 : 2; ctx.strokeRect(rightX + 20, y, panelW - 40, rowH * 2 + 30); }
+    if (statSelected) { ctx.strokeStyle = YELLOW; ctx.lineWidth = 3; ctx.strokeRect(rightX + 20, y, panelW - 40, rowH * 2 + 30); }
     ctx.fillStyle = statSelected ? YELLOW : WHITE;
     ctx.font = "bold 18px Arial";
     ctx.textAlign = "left";
@@ -1201,7 +1037,7 @@ function drawCharCreator(ctx) {
         ctx.fillStyle = statSelected && ccStatIdx === i ? YELLOW : WHITE;
         ctx.font = "bold 16px Arial";
         ctx.textAlign = "left";
-        ctx.fillText(`${cfg.icon} ${cfg.label}:`, rightX + 35, sy + 13);
+        ctx.fillText(`${cfg.icon} ${cfg.label}:`, rightX + 35, sy + 15);
         const barX = rightX + 140;
         const barW = panelW - 220;
         const barH = 16;
@@ -1210,9 +1046,8 @@ function drawCharCreator(ctx) {
         const val = customChar.stats[k] / cfg.max;
         ctx.fillStyle = statSelected && ccStatIdx === i ? YELLOW : rgb(100, 150, 220);
         ctx.fillRect(barX, sy, barW * val, barH);
-        const isBarHover = mouseX >= barX && mouseX <= barX + barW && mouseY >= sy && mouseY <= sy + barH;
-        ctx.strokeStyle = (statSelected && ccStatIdx === i) ? YELLOW : (isBarHover ? WHITE : GRAY);
-        ctx.lineWidth = (statSelected && ccStatIdx === i) ? 3 : (isBarHover ? 2 : 1);
+        ctx.strokeStyle = statSelected && ccStatIdx === i ? YELLOW : GRAY;
+        ctx.lineWidth = 1;
         ctx.strokeRect(barX, sy, barW, barH);
         ctx.fillStyle = WHITE;
         ctx.font = "bold 14px Arial";
@@ -1220,30 +1055,68 @@ function drawCharCreator(ctx) {
         ctx.fillText(`${customChar.stats[k]}/${cfg.max}`, rightX + panelW - 35, sy + 13);
     }
     y += rowH * 2 + 40;
+    
     const confirmSelected = ccSection === 5;
-    const confirmHover = mouseX >= rightX + 20 && mouseX <= rightX + panelW - 20 && mouseY >= y && mouseY <= y + rowH + 10;
-    ctx.fillStyle = confirmHover ? rgba(80, 200, 80, 0.6) : (confirmSelected ? rgba(80, 200, 80, 0.4) : rgba(255, 255, 255, 0.1));
+    ctx.fillStyle = confirmSelected ? rgba(80, 200, 80, 0.4) : rgba(255, 255, 255, 0.1);
     ctx.fillRect(rightX + 20, y, panelW - 40, rowH + 10);
-    ctx.strokeStyle = confirmHover || confirmSelected ? GREEN : GRAY;
-    ctx.lineWidth = confirmHover ? 4 : (confirmSelected ? 3 : 2);
-    ctx.strokeRect(rightX + 20, y, panelW - 40, rowH + 10);
-    ctx.fillStyle = confirmHover || confirmSelected ? GREEN : WHITE;
-    ctx.font = `bold ${confirmHover ? 26 : 22}px Arial`;
+    if (confirmSelected) { ctx.strokeStyle = GREEN; ctx.lineWidth = 4; ctx.strokeRect(rightX + 20, y, panelW - 40, rowH + 10); }
+    ctx.fillStyle = confirmSelected ? GREEN : WHITE;
+    ctx.font = `bold ${confirmSelected ? 24 : 20}px Arial`;
     ctx.textAlign = "center";
-    ctx.fillText("✓ CONFIRM CHARACTER ✓", rightX + panelW / 2, y + 38);
+    ctx.fillText(confirmSelected ? "✓ PRESS ENTER TO CONFIRM ✓" : "CONFIRM CHARACTER", rightX + panelW / 2, y + 38);
+    
     ctx.fillStyle = GRAY;
     ctx.font = "14px Arial";
     ctx.textAlign = "center";
-    ctx.fillText("Click any option to edit  |  Drag sliders to adjust  |  Keyboard also works!", WIDTH / 2, HEIGHT - 20);
+    ctx.fillText("↑/↓ or W/S: Navigate  |  ←/→ or A/D: Adjust  |  Type letters for name  |  Backspace: Delete  |  Q/E: Switch RGB channel", WIDTH / 2, HEIGHT - 20);
 }
 
-function drawBackground(c,s){const g=c.createLinearGradient(0,0,0,HEIGHT);g.addColorStop(0,s.sky_top);g.addColorStop(1,s.sky_bottom);c.fillStyle=g;c.fillRect(0,0,WIDTH,HEIGHT);if(s.decor==="volcano"){c.fillStyle=rgb(70,40,35);c.beginPath();c.moveTo(WIDTH*0.7,worldToScreen(GROUND_Y));c.lineTo(WIDTH*0.82,worldToScreen(120));c.lineTo(WIDTH*0.94,worldToScreen(GROUND_Y));c.fill();c.fillStyle=rgb(230,90,30);c.beginPath();c.moveTo(WIDTH*0.79,worldToScreen(200));c.lineTo(WIDTH*0.82,worldToScreen(130));c.lineTo(WIDTH*0.85,worldToScreen(200));c.fill();}const sly=worldToScreen(currentLavaY);c.fillStyle=rgb(40,10,8);c.fillRect(0,sly,WIDTH,HEIGHT-sly);c.fillStyle=rgb(240,110,30);for(let gx=0;gx<WIDTH;gx+=26){const w=Math.sin((gx+40)*0.15)*4;c.beginPath();c.arc(gx+13,sly+55+w,9,0,Math.PI*2);c.fill();}for(const p of platforms){const sy=worldToScreen(p.y);if(sy<-50||sy>HEIGHT+50)continue;const an=platformSpawnAnims.find(a=>a.plat===p);if(an){const pr=1-(an.frames/25);c.fillStyle=rgba(255,255,150,0.7*pr);c.fillRect(p.x-12+(1-pr)*12,sy-12+(1-pr)*12,p.w+24,p.h+24);}c.fillStyle=s.ground;c.fillRect(p.x,sy,p.w,p.h);c.fillStyle=s.ground_edge;c.fillRect(p.x,sy,p.w,10);} }
+function drawBackground(c,s){
+    const g=c.createLinearGradient(0,0,0,HEIGHT);g.addColorStop(0,s.sky_top);g.addColorStop(1,s.sky_bottom);c.fillStyle=g;c.fillRect(0,0,WIDTH,HEIGHT);
+    if(s.decor==="volcano"){c.fillStyle=rgb(70,40,35);c.beginPath();c.moveTo(WIDTH*0.7,worldToScreen(GROUND_Y));c.lineTo(WIDTH*0.82,worldToScreen(120));c.lineTo(WIDTH*0.94,worldToScreen(GROUND_Y));c.fill();c.fillStyle=rgb(230,90,30);c.beginPath();c.moveTo(WIDTH*0.79,worldToScreen(200));c.lineTo(WIDTH*0.82,worldToScreen(130));c.lineTo(WIDTH*0.85,worldToScreen(200));c.fill();}
+    if(s.decor==="slime"){
+        c.fillStyle=rgba(150,240,120,0.25);
+        for(let i=0;i<18;i++){const bx=(i*173+37)%WIDTH;const bob=Math.sin(Date.now()*0.002+i)*8;const by=((i*97)+bob+HEIGHT*2)%HEIGHT;const r=6+(i%5)*3;c.beginPath();c.arc(bx,by,r,0,Math.PI*2);c.fill();}
+    }
+    const hazardColor = s.hazard_color || rgb(40,10,8);
+    const hazardBubbleColor = s.hazard_bubble_color || rgb(240,110,30);
+    const sly=worldToScreen(currentLavaY);
+    c.fillStyle=hazardColor;c.fillRect(0,sly,WIDTH,HEIGHT-sly);
+    c.fillStyle=hazardBubbleColor;
+    for(let gx=0;gx<WIDTH;gx+=26){const wobbleSpeed=s.decor==="slime"?0.1:0.15;const timeShift=s.decor==="slime"?Date.now()*0.002:0;const w=Math.sin((gx+40)*wobbleSpeed+timeShift)*4;c.beginPath();c.arc(gx+13,sly+55+w,9,0,Math.PI*2);c.fill();}
+    for(const p of platforms){
+        const sy=worldToScreen(p.y);if(sy<-50||sy>HEIGHT+50)continue;
+        const an=platformSpawnAnims.find(a=>a.plat===p);
+        if(an){const pr=1-(an.frames/25);c.fillStyle=rgba(255,255,150,0.7*pr);c.fillRect(p.x-12+(1-pr)*12,sy-12+(1-pr)*12,p.w+24,p.h+24);}
+        if(s.decor==="slime"){
+            const wob=Math.sin(Date.now()*0.0035+p.x*0.04)*3;
+            c.fillStyle=s.ground;
+            c.beginPath();
+            c.moveTo(p.x,sy+p.h);
+            c.lineTo(p.x,sy+wob+4);
+            c.quadraticCurveTo(p.x+p.w*0.25,sy-5+wob,p.x+p.w*0.5,sy+wob);
+            c.quadraticCurveTo(p.x+p.w*0.75,sy+5+wob,p.x+p.w,sy+wob+4);
+            c.lineTo(p.x+p.w,sy+p.h);
+            c.closePath();
+            c.fill();
+            c.fillStyle=rgba(255,255,255,0.35);
+            c.beginPath();c.ellipse(p.x+p.w*0.3,sy+wob+3,p.w*0.14,3.5,0,0,Math.PI*2);c.fill();
+            c.fillStyle=s.ground_edge;
+            c.beginPath();c.arc(p.x+p.w*0.18,sy+wob+2,6,0,Math.PI*2);c.fill();
+            c.beginPath();c.arc(p.x+p.w*0.82,sy+wob+2,5,0,Math.PI*2);c.fill();
+            c.beginPath();c.arc(p.x+p.w*0.5,sy+p.h+4+Math.max(0,Math.sin(Date.now()*0.003+p.x)*3),3,0,Math.PI*2);c.fill();
+        } else {
+            c.fillStyle=s.ground;c.fillRect(p.x,sy,p.w,p.h);
+            c.fillStyle=s.ground_edge;c.fillRect(p.x,sy,p.w,10);
+        }
+    }
+}
 
-function drawHUD(c){const bw=Math.min(280,WIDTH*0.22),bh=22;const pos=[{x:20,y:20,a:'left'},{x:WIDTH-20-bw,y:20,a:'right'},{x:20,y:80,a:'left'},{x:WIDTH-20-bw,y:80,a:'right'}];for(let i=0;i<fighters.length;i++){const f=fighters[i],p=pos[i],r=f.health/f.maxHealth;c.fillStyle=BLACK;c.fillRect(p.x,p.y,bw,bh);c.fillStyle=r>0.5?GREEN:(r>0.25?YELLOW:RED);const fw=(bw-6)*r;c.fillRect(p.a==='left'?p.x+3:p.x+bw-3-fw,p.y+3,fw,bh-6);c.fillStyle=f.color;c.font="bold 14px Arial";c.textAlign=p.a;c.fillText(f.name,p.a==='left'?p.x:p.x+bw,p.y-4);const sr=f.super_charge/MAX_SUPER_CHARGE;c.fillStyle=BLACK;c.fillRect(p.x,p.y+bh+4,bw,8);if(sr>0){c.fillStyle=sr>=1?PURPLE:rgb(80,40,120);const sw=(bw-4)*sr;c.fillRect(p.a==='left'?p.x+2:p.x+bw-2-sw,p.y+bh+6,sw,4);}c.fillStyle=WHITE;c.font="bold 12px Arial";c.textAlign=p.a;c.fillText(`Wins: ${wins[i]}`,p.a==='left'?p.x:p.x+bw,p.y+bh+24);}c.fillStyle=WHITE;c.font="bold 24px Arial";c.textAlign="center";c.fillText(fighters.map(f=>f.health>0?"●":"○").join(" "),WIDTH/2,30);if(lavaRiseWarning>0&&Math.floor(lavaRiseWarning/5)%2===0){c.fillStyle=RED;c.font="bold 24px Arial";c.textAlign="center";c.fillText("WARNING: LAVA RISING!",WIDTH/2,HEIGHT/2-50);}if(radiationClouds.length>0&&!gameOver){c.fillStyle=TOXIC_GREEN;c.font="bold 14px Arial";c.textAlign="center";c.fillText("☢ TOXIC FALLOUT ACTIVE ☢",WIDTH/2,90);} }
+function drawHUD(c){const bw=Math.min(280,WIDTH*0.22),bh=22;const pos=[{x:20,y:20,a:'left'},{x:WIDTH-20-bw,y:20,a:'right'},{x:20,y:80,a:'left'},{x:WIDTH-20-bw,y:80,a:'right'}];for(let i=0;i<fighters.length;i++){const f=fighters[i],p=pos[i],r=f.health/f.maxHealth;c.fillStyle=BLACK;c.fillRect(p.x,p.y,bw,bh);c.fillStyle=r>0.5?GREEN:(r>0.25?YELLOW:RED);const fw=(bw-6)*r;c.fillRect(p.a==='left'?p.x+3:p.x+bw-3-fw,p.y+3,fw,bh-6);c.fillStyle=f.color;c.font="bold 14px Arial";c.textAlign=p.a;c.fillText(f.name,p.a==='left'?p.x:p.x+bw,p.y-4);const sr=f.super_charge/MAX_SUPER_CHARGE;c.fillStyle=BLACK;c.fillRect(p.x,p.y+bh+4,bw,8);if(sr>0){c.fillStyle=sr>=1?PURPLE:rgb(80,40,120);const sw=(bw-4)*sr;c.fillRect(p.a==='left'?p.x+2:p.x+bw-2-sw,p.y+bh+6,sw,4);}c.fillStyle=WHITE;c.font="bold 12px Arial";c.textAlign=p.a;c.fillText(`Wins: ${wins[i]}`,p.a==='left'?p.x:p.x+bw,p.y+bh+24);}c.fillStyle=WHITE;c.font="bold 24px Arial";c.textAlign="center";c.fillText(fighters.map(f=>f.health>0?"●":"○").join(" "),WIDTH/2,30);if(lavaRiseWarning>0&&Math.floor(lavaRiseWarning/5)%2===0){c.fillStyle=RED;c.font="bold 24px Arial";c.textAlign="center";c.fillText("WARNING: LAVA RISING!",WIDTH/2,HEIGHT/2-50);}if(radiationClouds.length>0&&!gameOver){c.fillStyle=TOXIC_GREEN;c.font="bold 14px Arial";c.textAlign="center";c.fillText("☢ TOXIC FALLOUT ACTIVE ☢",WIDTH/2,90);}if(STAGES[stageIdx]&&STAGES[stageIdx].bouncy&&!gameOver){c.fillStyle=rgb(120,230,90);c.font="bold 14px Arial";c.textAlign="center";c.fillText("🟢 SLIME WORLD - BOUNCE OFF PLATFORMS! 🟢",WIDTH/2,110);} }
 
 function update() {
     if(state==="mode_select"||state==="char_create")return;
-    if(state==="select")return;
+    if(state==="select"){if(p1Ready){selectConfirmTimer++;if(selectConfirmTimer>45){selectConfirmTimer=0;worldLocked=false;worldConfirmTimer=0;state="world_select";}}return;}
     if(state==="world_select"){if(worldLocked){worldConfirmTimer++;if(worldConfirmTimer>45){resetFighters();gameOver=false;winner=null;spawnTimer=WEAPON_SPAWN_INTERVAL;armorSpawnTimer=ARMOR_SPAWN_INTERVAL;fireballSpawnTimer=Math.random()*(FIREBALL_SPAWN_MAX-FIREBALL_SPAWN_MIN)+FIREBALL_SPAWN_MIN;worldConfirmTimer=0;state="playing";}}return;}
     if(!gameOver){
         for(let i=0;i<fighters.length;i++){if(fighters[i].isAI)updateAIFor(fighters[i],i-1);}
@@ -1277,152 +1150,10 @@ function update() {
 
 function draw() {
     ctx.clearRect(0,0,WIDTH,HEIGHT);
-    if(state==="mode_select"){
-        ctx.fillStyle=rgb(20,20,30);ctx.fillRect(0,0,WIDTH,HEIGHT);
-        ctx.fillStyle=YELLOW;ctx.font=`bold ${Math.min(48,WIDTH*0.04)}px Arial`;ctx.textAlign="center";
-        ctx.fillText("SELECT GAME MODE",WIDTH/2,HEIGHT*0.2);
-        const bw=Math.min(450,WIDTH*0.35),bh=70,sy=HEIGHT*0.32;
-        for(let i=0;i<MODE_CHOICES.length;i++){
-            const y=sy+i*(bh+20),is=i===modeIdx;
-            const hover=mouseX>=WIDTH/2-bw/2&&mouseX<=WIDTH/2+bw/2&&mouseY>=y&&mouseY<=y+bh;
-            ctx.fillStyle=hover?rgba(240,200,40,0.3):(is?rgba(240,200,40,0.2):rgba(255,255,255,0.05));
-            ctx.fillRect(WIDTH/2-bw/2,y,bw,bh);
-            ctx.strokeStyle=hover||is?YELLOW:GRAY;ctx.lineWidth=hover||is?4:2;
-            ctx.strokeRect(WIDTH/2-bw/2,y,bw,bh);
-            ctx.fillStyle=hover||is?YELLOW:WHITE;
-            ctx.font=`bold ${Math.min(28,WIDTH*0.022)}px Arial`;
-            ctx.fillText(MODE_CHOICES[i],WIDTH/2,y+bh/2+8);
-            if(is){ctx.fillText(">",WIDTH/2-bw/2-40,y+bh/2+10);ctx.fillText("<",WIDTH/2+bw/2+20,y+bh/2+10);}
-        }
-        ctx.fillStyle=GRAY;ctx.font=`${Math.min(18,WIDTH*0.014)}px Arial`;
-        ctx.fillText("Click a mode OR use W/S + Enter",WIDTH/2,HEIGHT*0.9);
-        return;
-    }
+    if(state==="mode_select"){ctx.fillStyle=rgb(20,20,30);ctx.fillRect(0,0,WIDTH,HEIGHT);ctx.fillStyle=YELLOW;ctx.font=`bold ${Math.min(48,WIDTH*0.04)}px Arial`;ctx.textAlign="center";ctx.fillText("SELECT GAME MODE",WIDTH/2,HEIGHT*0.2);const bw=Math.min(450,WIDTH*0.35),bh=70,sy=HEIGHT*0.32;for(let i=0;i<MODE_CHOICES.length;i++){const y=sy+i*(bh+20),is=i===modeIdx;ctx.fillStyle=is?rgba(240,200,40,0.2):rgba(255,255,255,0.05);ctx.fillRect(WIDTH/2-bw/2,y,bw,bh);ctx.strokeStyle=is?YELLOW:GRAY;ctx.lineWidth=is?4:2;ctx.strokeRect(WIDTH/2-bw/2,y,bw,bh);ctx.fillStyle=is?YELLOW:WHITE;ctx.font=`bold ${Math.min(28,WIDTH*0.022)}px Arial`;ctx.fillText(MODE_CHOICES[i],WIDTH/2,y+bh/2+8);if(is){ctx.fillText(">",WIDTH/2-bw/2-40,y+bh/2+10);ctx.fillText("<",WIDTH/2+bw/2+20,y+bh/2+10);}}ctx.fillStyle=GRAY;ctx.font=`${Math.min(18,WIDTH*0.014)}px Arial`;ctx.fillText("W/S or Up/Down to navigate, F/K/Enter/Space to confirm",WIDTH/2,HEIGHT*0.9);return;}
     if(state==="char_create"){drawCharCreator(ctx);return;}
-    
-    if(state==="select"){
-        ctx.fillStyle=rgb(20,20,20);ctx.fillRect(0,0,WIDTH,HEIGHT);
-        ctx.fillStyle=WHITE;ctx.font=`bold ${Math.min(32,WIDTH*0.03)}px Arial`;ctx.textAlign="center";
-        ctx.fillText("CHOOSE YOUR WEAPON",WIDTH/2,80);
-        const cw=Math.min(100,(WIDTH-60)/WEAPON_CHOICES.length),sx=WIDTH/2-(WEAPON_CHOICES.length*cw)/2+cw/2;
-        for(let i=0;i<WEAPON_CHOICES.length;i++){
-            const cx=sx+i*cw;
-            const hover=mouseX>=cx-40&&mouseX<=cx+40&&mouseY>=150&&mouseY<=230;
-            ctx.fillStyle=hover?rgba(255,255,255,0.2):(i===p1Idx?rgba(220,60,60,0.3):rgba(255,255,255,0.1));
-            ctx.fillRect(cx-40,150,80,80);
-            if(hover||i===p1Idx){ctx.strokeStyle=hover?WHITE:RED;ctx.lineWidth=3;ctx.strokeRect(cx-40,150,80,80);}
-            ctx.fillStyle=WHITE;ctx.font="14px Arial";
-            ctx.fillText(WEAPON_CHOICES[i]?WEAPON_CHOICES[i].charAt(0).toUpperCase()+WEAPON_CHOICES[i].slice(1):"Fists",cx,200);
-            if(i===p1Idx){ctx.fillStyle=RED;ctx.fillText("P1",cx,140);}
-        }
-        
-        ctx.fillStyle=p1Ready?GREEN:RED;
-        ctx.font=`bold ${Math.min(22,WIDTH*0.02)}px Arial`;
-        ctx.fillText(`Player 1: ${p1Ready?"✓ READY!":"Click a weapon OR use A/D + F"}`,WIDTH/2,280);
-        
-        ctx.fillStyle=PURPLE;ctx.font="bold 18px Arial";
-        ctx.fillText(`Playing as: ${customChar.name} (${SIZE_OPTIONS[customChar.sizeIdx].name})`,WIDTH/2,320);
-        
-        const btn = getStartButtonRect();
-        const btnHover = isStartButtonHovered();
-        
-        if (p1Ready) {
-            const pulse = 0.7 + 0.3 * Math.sin(Date.now() * 0.008);
-            const glowSize = btnHover ? 15 : 8;
-            ctx.shadowColor = GREEN;
-            ctx.shadowBlur = glowSize * pulse;
-            const grad = ctx.createLinearGradient(btn.x, btn.y, btn.x, btn.y + btn.h);
-            if (btnHover) {
-                grad.addColorStop(0, rgb(100, 240, 120));
-                grad.addColorStop(1, rgb(40, 180, 70));
-            } else {
-                grad.addColorStop(0, rgb(80, 220, 100));
-                grad.addColorStop(1, rgb(30, 160, 60));
-            }
-            ctx.fillStyle = grad;
-            const radius = 15;
-            ctx.beginPath();
-            ctx.moveTo(btn.x + radius, btn.y);
-            ctx.lineTo(btn.x + btn.w - radius, btn.y);
-            ctx.quadraticCurveTo(btn.x + btn.w, btn.y, btn.x + btn.w, btn.y + radius);
-            ctx.lineTo(btn.x + btn.w, btn.y + btn.h - radius);
-            ctx.quadraticCurveTo(btn.x + btn.w, btn.y + btn.h, btn.x + btn.w - radius, btn.y + btn.h);
-            ctx.lineTo(btn.x + radius, btn.y + btn.h);
-            ctx.quadraticCurveTo(btn.x, btn.y + btn.h, btn.x, btn.y + btn.h - radius);
-            ctx.lineTo(btn.x, btn.y + radius);
-            ctx.quadraticCurveTo(btn.x, btn.y, btn.x + radius, btn.y);
-            ctx.closePath();
-            ctx.fill();
-            ctx.strokeStyle = btnHover ? WHITE : rgb(200, 255, 200);
-            ctx.lineWidth = btnHover ? 4 : 3;
-            ctx.stroke();
-            ctx.shadowBlur = 0;
-            ctx.fillStyle = WHITE;
-            ctx.font = `bold ${Math.min(36, WIDTH * 0.03)}px Arial`;
-            ctx.textAlign = "center";
-            ctx.fillText("▶ START GAME ▶", btn.x + btn.w/2, btn.y + btn.h/2 + 10);
-            ctx.fillStyle = rgba(255, 255, 255, 0.8);
-            ctx.font = "14px Arial";
-            ctx.fillText("Click here or press ENTER", btn.x + btn.w/2, btn.y + btn.h + 25);
-        } else {
-            ctx.fillStyle = rgb(60, 60, 60);
-            const radius = 15;
-            ctx.beginPath();
-            ctx.moveTo(btn.x + radius, btn.y);
-            ctx.lineTo(btn.x + btn.w - radius, btn.y);
-            ctx.quadraticCurveTo(btn.x + btn.w, btn.y, btn.x + btn.w, btn.y + radius);
-            ctx.lineTo(btn.x + btn.w, btn.y + btn.h - radius);
-            ctx.quadraticCurveTo(btn.x + btn.w, btn.y + btn.h, btn.x + btn.w - radius, btn.y + btn.h);
-            ctx.lineTo(btn.x + radius, btn.y + btn.h);
-            ctx.quadraticCurveTo(btn.x, btn.y + btn.h, btn.x, btn.y + btn.h - radius);
-            ctx.lineTo(btn.x, btn.y + radius);
-            ctx.quadraticCurveTo(btn.x, btn.y, btn.x + radius, btn.y);
-            ctx.closePath();
-            ctx.fill();
-            ctx.strokeStyle = GRAY;
-            ctx.lineWidth = 2;
-            ctx.stroke();
-            ctx.fillStyle = rgb(140, 140, 140);
-            ctx.font = `bold ${Math.min(32, WIDTH * 0.028)}px Arial`;
-            ctx.textAlign = "center";
-            ctx.fillText("🔒 SELECT A WEAPON FIRST", btn.x + btn.w/2, btn.y + btn.h/2 + 10);
-        }
-        
-        // Keyboard hints
-        ctx.fillStyle = GRAY;
-        ctx.font = "13px Arial";
-        ctx.textAlign = "center";
-        if (p1Ready) {
-            ctx.fillText("A/D to change weapon  |  ENTER to start  |  ESC to go back", WIDTH/2, HEIGHT - 20);
-        } else {
-            ctx.fillText("A/D or ←/→ to browse  |  F or ENTER to confirm", WIDTH/2, HEIGHT - 20);
-        }
-        return;
-    }
-    
-    if(state==="world_select"){
-        drawBackground(ctx,STAGES[stageIdx]);
-        ctx.fillStyle=rgba(0,0,0,0.7);ctx.fillRect(0,0,WIDTH,HEIGHT);
-        ctx.fillStyle=WHITE;ctx.font=`bold ${Math.min(32,WIDTH*0.03)}px Arial`;ctx.textAlign="center";
-        ctx.fillText("CHOOSE YOUR WORLD",WIDTH/2,80);
-        ctx.fillStyle=YELLOW;ctx.font=`bold ${Math.min(24,WIDTH*0.025)}px Arial`;
-        ctx.fillText(STAGES[stageIdx].name,WIDTH/2,140);
-        const leftHover=mouseX>=WIDTH/2-120&&mouseX<=WIDTH/2-60&&mouseY>=120&&mouseY<=160;
-        ctx.fillStyle=leftHover?rgba(255,255,255,0.3):rgba(255,255,255,0.1);
-        ctx.fillRect(WIDTH/2-120,120,60,40);
-        ctx.strokeStyle=leftHover?WHITE:GRAY;ctx.lineWidth=2;ctx.strokeRect(WIDTH/2-120,120,60,40);
-        ctx.fillStyle=WHITE;ctx.font="bold 32px Arial";ctx.fillText("<",WIDTH/2-90,150);
-        const rightHover=mouseX>=WIDTH/2+60&&mouseX<=WIDTH/2+120&&mouseY>=120&&mouseY<=160;
-        ctx.fillStyle=rightHover?rgba(255,255,255,0.3):rgba(255,255,255,0.1);
-        ctx.fillRect(WIDTH/2+60,120,60,40);
-        ctx.strokeStyle=rightHover?WHITE:GRAY;ctx.lineWidth=2;ctx.strokeRect(WIDTH/2+60,120,60,40);
-        ctx.fillStyle=WHITE;ctx.fillText(">",WIDTH/2+90,150);
-        const confirmHover=mouseY>=280&&mouseY<=340;
-        ctx.fillStyle=worldLocked?GREEN:(confirmHover?rgba(80,200,80,0.6):rgba(80,200,80,0.3));
-        ctx.font=`bold ${Math.min(28,WIDTH*0.022)}px Arial`;
-        ctx.fillText(worldLocked?"✓ READY! ✓":"Click here or press F to confirm",WIDTH/2,310);
-        return;
-    }
+    if(state==="select"){ctx.fillStyle=rgb(20,20,20);ctx.fillRect(0,0,WIDTH,HEIGHT);ctx.fillStyle=WHITE;ctx.font=`bold ${Math.min(32,WIDTH*0.03)}px Arial`;ctx.textAlign="center";ctx.fillText("CHOOSE YOUR WEAPON",WIDTH/2,80);const cw=Math.min(100,(WIDTH-60)/WEAPON_CHOICES.length),sx=WIDTH/2-(WEAPON_CHOICES.length*cw)/2+cw/2;for(let i=0;i<WEAPON_CHOICES.length;i++){const cx=sx+i*cw;ctx.fillStyle=i===p1Idx?rgba(220,60,60,0.3):rgba(255,255,255,0.1);ctx.fillRect(cx-40,150,80,80);ctx.fillStyle=WHITE;ctx.font="14px Arial";ctx.fillText(WEAPON_CHOICES[i]?WEAPON_CHOICES[i].charAt(0).toUpperCase()+WEAPON_CHOICES[i].slice(1):"Fists",cx,200);if(i===p1Idx){ctx.fillStyle=RED;ctx.fillText("P1",cx,140);}}ctx.fillStyle=p1Ready?GREEN:RED;ctx.fillText(`Player 1: ${p1Ready?"READY!":"A/D choose, F to lock"}`,WIDTH/2,300);ctx.fillStyle=PURPLE;ctx.font="bold 18px Arial";ctx.fillText(`Playing as: ${customChar.name} (${SIZE_OPTIONS[customChar.sizeIdx].name})`,WIDTH/2,340);return;}
+    if(state==="world_select"){drawBackground(ctx,STAGES[stageIdx]);ctx.fillStyle=rgba(0,0,0,0.7);ctx.fillRect(0,0,WIDTH,HEIGHT);ctx.fillStyle=WHITE;ctx.font=`bold ${Math.min(32,WIDTH*0.03)}px Arial`;ctx.textAlign="center";ctx.fillText("CHOOSE YOUR WORLD",WIDTH/2,80);ctx.fillStyle=YELLOW;ctx.font=`bold ${Math.min(24,WIDTH*0.025)}px Arial`;ctx.fillText(STAGES[stageIdx].name,WIDTH/2,140);ctx.fillStyle=WHITE;ctx.fillText("<",WIDTH/2-100,140);ctx.fillText(">",WIDTH/2+100,140);ctx.fillStyle=worldLocked?GREEN:WHITE;ctx.font="20px Arial";ctx.fillText(worldLocked?"READY!":"A/D or Arrows to browse, F or K to lock in",WIDTH/2,300);if(STAGES[stageIdx].bouncy){ctx.fillStyle=rgb(120,230,90);ctx.font="16px Arial";ctx.fillText("Everything bounces here - platforms, bombs, you!",WIDTH/2,180);}return;}
 
     ctx.save();ctx.translate(screenShakeX,screenShakeY);
     drawBackground(ctx,STAGES[stageIdx]);
@@ -1441,15 +1172,22 @@ function draw() {
     ctx.restore();
     drawHUD(ctx);
 
+    // --- UPDATED: Game Over Screen with R Press Instructions ---
     if(gameOver){
-        ctx.fillStyle=rgba(0,0,0,0.7);ctx.fillRect(0,0,WIDTH,HEIGHT);
-        ctx.fillStyle=YELLOW;ctx.font=`bold ${Math.min(48,WIDTH*0.05)}px Arial`;ctx.textAlign="center";
+        ctx.fillStyle=rgba(0,0,0,0.7);
+        ctx.fillRect(0,0,WIDTH,HEIGHT);
+        ctx.fillStyle=YELLOW;
+        ctx.font=`bold ${Math.min(48,WIDTH*0.05)}px Arial`;
+        ctx.textAlign="center";
         ctx.fillText(winner?`${winner.name} WINS!`:"DRAW!",WIDTH/2,HEIGHT/2-40);
-        ctx.fillStyle=WHITE;ctx.font="24px Arial";
-        ctx.fillText("Click or Press R: Change Character  |  R twice: Change Mode  |  ESC: Quit",WIDTH/2,HEIGHT/2+20);
+        ctx.fillStyle=WHITE;
+        ctx.font="24px Arial";
+        ctx.fillText("Press R: Change Character  |  Press R twice: Change Mode  |  ESC: Quit",WIDTH/2,HEIGHT/2+20);
     }
     else{
-        ctx.fillStyle=rgba(40,40,40,0.8);ctx.font="14px Arial";ctx.textAlign="center";
+        ctx.fillStyle=rgba(40,40,40,0.8);
+        ctx.font="14px Arial";
+        ctx.textAlign="center";
         ctx.fillText(`P1 (${customChar.name}): A/D W F G SPACE(ray) Q(aerial) | ☄️ Dodge ASTEROIDS!`,WIDTH/2,HEIGHT-15);
     }
 }
